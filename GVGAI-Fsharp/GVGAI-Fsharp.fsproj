@@ -6,7 +6,7 @@
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>dda2eb4f-5704-48dc-beb2-948bb8960efe</ProjectGuid>
-    <OutputType>Library</OutputType>
+    <OutputType>Exe</OutputType>
     <RootNamespace>GVGAI_Fsharp</RootNamespace>
     <AssemblyName>GVGAI_Fsharp</AssemblyName>
     <TargetFrameworkVersion>v4.6</TargetFrameworkVersion>
@@ -23,15 +23,18 @@
     <DefineConstants>DEBUG;TRACE</DefineConstants>
     <WarningLevel>3</WarningLevel>
     <DocumentationFile>bin\Debug\GVGAI_Fsharp.XML</DocumentationFile>
+    <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
     <Tailcalls>true</Tailcalls>
     <OutputPath>bin\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
+    <DefineConstants>
+    </DefineConstants>
     <WarningLevel>3</WarningLevel>
     <DocumentationFile>bin\Release\GVGAI_Fsharp.XML</DocumentationFile>
+    <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
   <PropertyGroup>
     <MinimumVisualStudioVersion Condition="'$(MinimumVisualStudioVersion)' == ''">11</MinimumVisualStudioVersion>
@@ -50,12 +53,26 @@
   </Choose>
   <Import Project="$(FSharpTargetsPath)" />
   <ItemGroup>
-    <None Include="Scripts\load-references-debug.fsx" />
-    <None Include="Scripts\load-project-debug.fsx" />
     <Compile Include="AssemblyInfo.fs" />
-    <Compile Include="Library1.fs" />
-    <None Include="vgdl_parser.fsx" />
+    <None Include="dump.fsx" />
     <Content Include="packages.config" />
+    <None Include="VGDLFunGen_v0.fsx" />
+    <None Include="Distinct Functions.fsx" />
+    <None Include="dictionary timmings.fsx" />
+    <None Include="fs.fsx" />
+    <None Include="interactive.fsx" />
+    <None Include="Script1.fsx" />
+    <None Include="Scripts\load-references-release.fsx" />
+    <None Include="Scripts\load-project-release.fsx" />
+    <None Include="dump2.fsx" />
+    <None Include="VGDLSemantic_v0.fsx" />
+    <None Include="VGDLParser_v0.fsx" />
+    <None Include="timmings.fsx" />
+    <None Include="duplicate parser.fsx" />
+    <None Include="hashset_test.fsx" />
+    <None Include="VGDLParser.fsx" />
+    <None Include="VGDLSemantic.fsx" />
+    <None Include="VGDLFunGen.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FParsec">
@@ -66,10 +83,19 @@
       <HintPath>..\packages\FParsec.1.0.2\lib\net40-client\FParsecCS.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Include="mscorlib" />
-    <Reference Include="FSharp.Core, Version=$(TargetFSharpCoreVersion), Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a">
+    <Reference Include="FSharp.Core">
+      <HintPath>..\packages\FSharp.Core.4.0.0.1\lib\net40\FSharp.Core.dll</HintPath>
       <Private>True</Private>
     </Reference>
+    <Reference Include="FSharpx.Collections">
+      <HintPath>..\packages\FSharpx.Collections.1.14.0\lib\net40\FSharpx.Collections.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="MonoGame.Framework">
+      <HintPath>..\packages\MonoGame.Framework.WindowsDX.3.4.0.459\lib\net40\MonoGame.Framework.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="mscorlib" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Numerics" />
