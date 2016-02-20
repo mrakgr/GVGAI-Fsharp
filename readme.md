@@ -21,5 +21,6 @@ I am definitely aiming to exceed the original in simplicity of use.
 To use the library just run VGDLFunGen.fsx.
 
 Dependencies:
-MonoGame
-Fparsec
+
+* MonoGame
+* Fparsec
