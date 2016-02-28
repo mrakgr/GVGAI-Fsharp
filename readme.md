@@ -20,7 +20,11 @@ I am definitely aiming to exceed the original in simplicity of use.
 
 To use the library just run VGDLFunGen.fsx.
 
+UPDATE 2/28/2016: Chase, Frogs, MissileCommand, Portals are done. Will take another break to learn [Idriss](http://www.idris-lang.org/) for a while. After this I do not foresee having to take any further detours, but this one might take longer than the IL 2.0 Assembler book. It depends how fun it turns out to be.
+
 Dependencies:
 
 * MonoGame
 * Fparsec
+
+Disclaimer: The sprites belong to [GVGAI](http://www.gvgai.net/).

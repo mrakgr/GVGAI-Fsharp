@@ -54,22 +54,7 @@
   <Import Project="$(FSharpTargetsPath)" />
   <ItemGroup>
     <Compile Include="AssemblyInfo.fs" />
-    <None Include="dump.fsx" />
     <Content Include="packages.config" />
-    <None Include="VGDLFunGen_v0.fsx" />
-    <None Include="Distinct Functions.fsx" />
-    <None Include="dictionary timmings.fsx" />
-    <None Include="fs.fsx" />
-    <None Include="interactive.fsx" />
-    <None Include="Script1.fsx" />
-    <None Include="Scripts\load-references-release.fsx" />
-    <None Include="Scripts\load-project-release.fsx" />
-    <None Include="dump2.fsx" />
-    <None Include="VGDLSemantic_v0.fsx" />
-    <None Include="VGDLParser_v0.fsx" />
-    <None Include="timmings.fsx" />
-    <None Include="duplicate parser.fsx" />
-    <None Include="hashset_test.fsx" />
     <None Include="VGDLParser.fsx" />
     <None Include="VGDLSemantic.fsx" />
     <None Include="VGDLFunGen.fsx" />

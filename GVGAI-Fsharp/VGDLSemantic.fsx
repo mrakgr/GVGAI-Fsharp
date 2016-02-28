@@ -16,12 +16,9 @@ open System.Linq
 
 let STANDARD_SPEED = 3.0f
 
-// TODO: textures and queues are not supposed to be a part of the object state. Do something about that.
 type VGDLSprite =
     struct
     val texture : Texture2D option
-    val queue_del : ResizeArray<InteractionTypesDelayed>
-    val queue_im : ResizeArray<InteractionTypesImmediate>
     val position : Vector2
     val velocity : Vector2
     val id : int
@@ -36,9 +33,9 @@ type VGDLSprite =
     val limit : int
     val duration : int
         
-    new(texture,queue_del,queue_im,position,velocity,id,elapsed_time,total,orientation,resources,mclass,shootType,cooldown,probability,limit,duration) =
+    new(texture,position,velocity,id,elapsed_time,total,orientation,resources,mclass,shootType,cooldown,probability,limit,duration) =
         {
-        texture=texture;queue_del=queue_del;queue_im=queue_im;position=position;velocity=velocity;
+        texture=texture;position=position;velocity=velocity;
         id=id;elapsed_time=elapsed_time;total=total;orientation=orientation;resources=resources;
         mclass=mclass;shootType=shootType;cooldown=cooldown;probability=probability;limit=limit;
         duration=duration;
@@ -46,10 +43,8 @@ type VGDLSprite =
     end
 
     /// The default init.
-    static member def=
+    static member def= // Should be synced with the default record, but no matter.
         new VGDLSprite(None,
-            queue_del=ResizeArray(),
-            queue_im=ResizeArray(),
             position=Vector2(0.0f,0.0f),
             velocity=Vector2(0.0f,0.0f),
             id= -1,
@@ -68,8 +63,6 @@ type VGDLSprite =
 type VGDLMutableSprite =
     struct
     val mutable texture : Texture2D option
-    val mutable queue_del : ResizeArray<InteractionTypesDelayed>
-    val mutable queue_im : ResizeArray<InteractionTypesImmediate>
     val mutable position : Vector2
     val mutable velocity : Vector2
     val mutable id : int
@@ -84,9 +77,9 @@ type VGDLMutableSprite =
     val mutable limit : int
     val mutable duration : int
         
-    new(texture,queue_del,queue_im,position,velocity,id,elapsed_time,total,orientation,resources,mclass,shootType,cooldown,probability,limit,duration) =
+    new(texture,position,velocity,id,elapsed_time,total,orientation,resources,mclass,shootType,cooldown,probability,limit,duration) =
         {
-        texture=texture;queue_del=queue_del;queue_im=queue_im;position=position;velocity=velocity;
+        texture=texture;position=position;velocity=velocity;
         id=id;elapsed_time=elapsed_time;total=total;orientation=orientation;resources=resources;
         mclass=mclass;shootType=shootType;cooldown=cooldown;probability=probability;limit=limit;
         duration=duration;
@@ -94,18 +87,47 @@ type VGDLMutableSprite =
     end
 
     static member inline fromIm (x: VGDLSprite) =
-        new VGDLMutableSprite(x.texture,x.queue_del,x.queue_im,x.position,x.velocity,x.id,x.elapsed_time,x.total,x.orientation,x.resources,x.mclass,x.shootType,x.cooldown,x.probability,x.limit,x.duration)
+        new VGDLMutableSprite(x.texture,x.position,x.velocity,x.id,x.elapsed_time,x.total,x.orientation,x.resources,x.mclass,x.shootType,x.cooldown,x.probability,x.limit,x.duration)
 
     member inline x.toIm =
-        new VGDLSprite(x.texture,x.queue_del,x.queue_im,x.position,x.velocity,x.id,x.elapsed_time,x.total,x.orientation,x.resources,x.mclass,x.shootType,x.cooldown,x.probability,x.limit,x.duration)
-        
+        new VGDLSprite(x.texture,x.position,x.velocity,x.id,x.elapsed_time,x.total,x.orientation,x.resources,x.mclass,x.shootType,x.cooldown,x.probability,x.limit,x.duration)
 
-type MainRec = 
+// Double buffered state type.
+type StateType =
+    struct
+    val mutable sprite1 : VGDLSprite
+    val mutable sprite2 : VGDLSprite
+    val mutable sprite3 : VGDLSprite
+    new (a1,a2,a3) = {sprite1=a1;sprite2=a2;sprite3=a3}
+    new (sprite1) = {sprite1=sprite1;sprite2=VGDLSprite.def;sprite3=VGDLSprite.def}
+    end
+
+    static member def = StateType(VGDLSprite.def,VGDLSprite.def,VGDLSprite.def)
+
+type private MainRec = 
     {
     sprite_set : SpriteSetTypes list
     termination_set : TerminationSetTypes list 
     interaction_set : InteractionSetTypes list
-    level_mapping_set : Map<char,string>
+    level_mapping_set : Map<char,string list>
+    }
+
+type private TagRecord =
+    {
+    scoreChange : int
+    resource : int
+    limit : int
+    stype : int
+    value : int
+    }
+
+let private default_tagrec =
+    {
+    scoreChange = 0
+    resource = -1
+    limit = 0
+    stype = -1
+    value = 0
     }
 
 let runSematic gameDesc =
@@ -191,8 +213,13 @@ let runSematic gameDesc =
                 | h::hs -> 
                     let parent_name = get_sprite_name h
                     loop (map.Add(parent_name,[])) (parent_name::accum) hs
-                | [] -> accum |> List.rev, map
+                | [] -> accum, map
             loop Map.empty [] spriteset
+            |> fun (names, hierarchy) ->
+                names,
+                if hierarchy |> Map.containsKey("avatar") = false then
+                    hierarchy |> Map.add "avatar" []
+                else hierarchy
 
         let default_record =
             { 
@@ -204,17 +231,32 @@ let runSematic gameDesc =
             color = ColorsConstants.WHITE
             speed = 1.0
             image = ""
-            total = 0
+            total = System.Int32.MaxValue
             singleton = false
             shrinkfactor = 1.0
             limit = 0
             }
 
         let sprite_names, hierarchy_map = mapHierarchy tree_rec.sprite_set
-        let id_map = sprite_names |> Set |> fun x -> x.Add("avatar").Add("wall") |> Set.toArray |> Array.mapi (fun i x -> x,i) |> Map.ofArray
+        let id_map = 
+            "avatar"::"wall"::sprite_names 
+            |> List.toArray
+            |> Array.distinct 
+            |> Array.rev
+            |> Array.mapi (fun i x -> x,i)
+            |> fun x -> x.ToDictionary((fun (k,v) -> k),(fun (k,v) -> v), HashIdentity.Structural)
+
+//            sprite_names |> Set |> fun x -> x.Add("avatar").Add("wall") 
+//            |> Set.toArray |> Array.mapi (fun i x -> x,i) |> Map.ofArray
+//            |> fun x -> Dictionary(x,HashIdentity.Structural)
+
 
         let flat_spriteset = 
             flattenSpriteSet tree_rec.sprite_set
+            |> fun x ->
+                if x |> Map.containsKey("avatar") = false then 
+                    x |> Map.add "avatar" (HashSet([|MainClass MovingAvatar|],VGDLParser.Inner.distinction_identity)) 
+                else x
             |> Map.map (fun k v ->
                     Seq.fold (
                         fun state v -> 
@@ -256,59 +298,77 @@ let runSematic gameDesc =
                 match x with
                 | Interaction((_,"EOS"),_) -> loop (x::eos) neos xs
                 | Interaction _ -> loop eos (x::neos) xs
-                | _ -> failwith "Not supposed to be called on an processed set."
             | [] -> eos,neos
         loop [] [] (tree_rec.interaction_set)
 
+    let interaction_tagger l r =
+        let tag_hashset hashset =
+            let fold_state state =
+                function
+                | InteractionScoreChange x -> {state with scoreChange = x}
+                | InteractionResource x -> 
+                    match id_map.TryGetValue x with
+                    | true, v -> {state with resource = v}
+                    | false, _ ->
+                        let t = id_map.Count
+                        printfn "Assigning new id %i to resource %s" t x
+                        id_map.Add(x,t)
+                        {state with resource = t}
+                | InteractionLimit x -> {state with limit = x}
+                | InteractionStype x -> {state with stype = id_map.[x]}
+                | InteractionValue x -> {state with value = x}
+            Seq.fold fold_state default_tagrec hashset
+               
+        function
+        | TurnAround -> TurnAroundTagged
+        | CollectResource -> CollectResourceTagged r
+        | KillIfFromAbove x -> let t = tag_hashset x in KillIfFromAboveTagged t.scoreChange
+        | KillIfOtherHasMore x -> let t = tag_hashset x in KillIfOtherHasMoreTagged(t.resource,t.limit)
+        | KillSprite x -> let t = tag_hashset x in KillSpriteTagged t.scoreChange
+        | TransformTo x -> let t = tag_hashset x in TransformToTagged(t.stype,t.scoreChange)
+        | CloneSprite -> CloneSpriteTagged
+        | ChangeResource x -> let t = tag_hashset x in ChangeResourceTagged(t.resource,t.value)
+        | PullWithIt -> PullWithItTagged
+        | KillIfHasLess x -> let t = tag_hashset x in KillIfHasLessTagged(t.resource,t.limit)
+        | TeleportToExit -> TeleportToExitTagged
+
+    let interaction_tagger_del l r =
+        function
+        | StepBack -> StepBackTagged
+        | WrapAround -> WrapAroundTagged
+        | ReverseDirection -> ReverseDirectionTagged           
+
     let tagged_eos = 
-        let buf = Array.init tree_map.Count (fun _ -> ResizeArray())
-        eos 
-        |> List.iter ( function 
-            | Interaction((l,r),attrs) -> 
-                for x in id_hierarchy_map.[l] do
-                    buf.[x].Add(
-                        attrs
-                        |> List.map (
-                                fun x ->
-                                match x with
-                                | ImmediateInteraction(TransformTo x) -> ImmediateInteraction <| TransformToTagged (id_map.[x])
-                                | ImmediateInteraction(KillIfOtherHasMore (x,y)) -> ImmediateInteraction <| KillIfOtherHasMoreTagged (id_map.[x],y)
-                                | _ -> x
-                                ))
-            | _ -> failwith "Interaction only."
-            )
-        buf 
-        |> Array.map (fun x -> x.ToArray() |> Array.collect (fun x -> x |> List.toArray)) // Plain arrays are faster than ResizeArrays for iterating over them.
-        |> Array.map (
-            fun x -> 
-                x |> Array.choose (function DelayedInteraction x -> Some x | _ -> None),
-                x |> Array.choose (function ImmediateInteraction x -> Some x | _ -> None))
+        let buf_im = Array.init tree_map.Count (fun _ -> ResizeArray())
+        let buf_del = Array.init tree_map.Count (fun _ -> ResizeArray())
+        eos |> List.iteri 
+            (fun i (Interaction((l,r),attrs)) ->
+            for x in id_hierarchy_map.[l] do
+                match attrs with
+                | InteractionTypesImmediate attrs -> buf_im.[x].Add(interaction_tagger x -1 attrs, i)
+                | InteractionTypesDelayed attrs -> buf_del.[x].Add(interaction_tagger_del x -1 attrs, i)
+                | _ -> failwith "Can't match this.")
+            
+        buf_im |> Array.map (fun x -> x.ToArray()), // Plain arrays are faster than ResizeArrays for iterating over them.
+        buf_del |> Array.map (fun x -> x.ToArray())
 
     let tagged_neos = 
-        let buf = Array2D.init tree_map.Count tree_map.Count (fun _ _ -> ResizeArray())
-        neos 
-        |> List.iter (
-            function 
-            | Interaction((l,r),attrs) -> 
+        let buf_im = Array2D.init tree_map.Count tree_map.Count (fun _ _ -> ResizeArray())
+        let buf_del = Array2D.init tree_map.Count tree_map.Count (fun _ _ -> ResizeArray())
+        neos |> List.iteri 
+            (fun i (Interaction((l,r),attrs)) ->
                 for x in id_hierarchy_map.[l] do
                     for y in id_hierarchy_map.[r] do
-                        buf.[x,y].Add(
-                            attrs
-                            |> List.map (
-                                    fun x ->
-                                    match x with
-                                    | ImmediateInteraction(TransformTo x) -> ImmediateInteraction <| TransformToTagged (id_map.[x])
-                                    | ImmediateInteraction(KillIfOtherHasMore (x,y)) -> ImmediateInteraction <| KillIfOtherHasMoreTagged (id_map.[x],y)
-                                    | _ -> x
-                                    ))
-                | _ -> failwith "Interaction only."
-                )
-        buf 
-        |> Array2D.map (fun x -> x.ToArray() |> Array.collect (fun x -> x |> List.toArray)) // Plain arrays are faster than ResizeArrays for iterating over them.
-        |> Array2D.map (
-            fun x -> 
-                x |> Array.choose (function DelayedInteraction x -> Some x | _ -> None),
-                x |> Array.choose (function ImmediateInteraction x -> Some x | _ -> None))
+                        match attrs with
+                        | InteractionTypesImmediate attrs -> 
+                            match attrs with
+                            | CollectResource -> buf_im.[y,x].Add(interaction_tagger y x attrs, i) // Collect resource is a special case that work on the right argument. Here I am reversing it.
+                            | _ -> buf_im.[x,y].Add(interaction_tagger x y attrs, i)
+                        | InteractionTypesDelayed attrs -> buf_del.[x,y].Add(interaction_tagger_del x y attrs, i)
+                        | _ -> failwith "Can't match this.")
+
+        buf_im |> Array2D.map (fun x -> x.ToArray()), // Plain arrays are faster than ResizeArrays for iterating over them.
+        buf_del |> Array2D.map (fun x -> x.ToArray())
 
     let reverse_hierarchy = // Computes the reverse hierarchy from children to parents. Needed for TerminationSet counters.
         let d = Dictionary<int,HashSet<int>>(HashIdentity.Structural)
@@ -327,10 +387,7 @@ let runSematic gameDesc =
                 match d.TryGetValue self with
                 | true, dh -> dh.Add parent |> ignore
                 | false, _ -> d.Add(self, HashSet([|self;parent|],HashIdentity.Structural))
-        let d' = Dictionary<int,int[]>(HashIdentity.Structural)
-        for x in d do d'.Add(x.Key,x.Value |> Seq.toArray)
-        d' |> Seq.map (fun x -> x.Value) |> Seq.toArray
-
+        d.ToArray() |> Array.sortBy (fun x -> x.Key) |> Array.map (fun x -> x.Value |> Seq.toArray)
         
     let initializer_map (texture_dict : Dictionary<string, Texture2D>) =
         /// Get the image name of a sprite otherwise it returns ""
@@ -356,8 +413,6 @@ let runSematic gameDesc =
                 let init position = 
                     new VGDLSprite(
                         texture,
-                        queue_del=ResizeArray(),
-                        queue_im=ResizeArray(),
                         position=position,
                         velocity=velocity,
                         id=id_map.[sprite_name],
@@ -378,13 +433,15 @@ let runSematic gameDesc =
         |> fun x -> Dictionary(x,HashIdentity.Structural)
 
     let level_mapping_set =
-        try
-            tree_rec.level_mapping_set
-            |> Map.map (fun k v -> id_map.[v])
-        with
-            | :? KeyNotFoundException as x ->
-                printfn "In LevelMapping there is an invalid mapping."
-                reraise()
+        tree_rec.level_mapping_set
+        |> Map.map (fun k v -> 
+            v |> List.toArray 
+            |> Array.map (
+                fun x -> 
+                match id_map.TryGetValue x with
+                | true, v -> id_map.[x]
+                | false, _ -> failwithf "In LevelMapping there is an invalid mapping. key=%s" x
+                ))
 
     let termination_set =
         tree_rec.termination_set

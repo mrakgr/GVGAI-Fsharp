@@ -30,6 +30,9 @@ type MainClassTypes =
 | Door
 | Resource
 | MovingAvatar
+| Fleeing
+| Chaser
+| Portal
 
 type PhysicsTypes =
 | GridPhysics
@@ -68,16 +71,16 @@ type AttributeTypesRecord =
 
 type GameEndTypes = Continue | Win | Lose
 
-type TerminationTypes =
+type TerminationArguments =
 | TerminationLimit of int
 | TerminationWin of GameEndTypes
 | TerminationSType of string
 | TerminationNumberedSType of int * string
 
 type TerminationSetTypes =
-| Timeout of HashSet<TerminationTypes>
-| SpriteCounter of HashSet<TerminationTypes>
-| MultiSpriteCounter of HashSet<TerminationTypes>
+| Timeout of HashSet<TerminationArguments>
+| SpriteCounter of HashSet<TerminationArguments>
+| MultiSpriteCounter of HashSet<TerminationArguments>
 
 type TerminationSetTaggedTypes =
 | TimeoutTagged of int * GameEndTypes
@@ -88,35 +91,60 @@ type SpriteSetTypes =
 | Sprite of string * HashSet<AttributeTypes>
 | SubSprites of SpriteSetTypes list
 
-type InteractionTypesDelayed =
-| StepBack
+type InteractionArguments =
+| InteractionScoreChange of int
+| InteractionResource of string
+| InteractionLimit of int
+| InteractionStype of string
+| InteractionValue of int
 
 type InteractionTypesImmediate =
 | TurnAround
-| ScoreChange of int
-| CollectResource of int
-| KillIfFromAbove of int
-| KillIfOtherHasMore of string * int
-| KillIfOtherHasMoreTagged of int * int
-| KillSprite
-| TransformTo of string
-| TransformToTagged of int
+| CollectResource
+| KillIfFromAbove of HashSet<InteractionArguments>
+| KillIfOtherHasMore of HashSet<InteractionArguments>
+| KillSprite of HashSet<InteractionArguments>
+| TransformTo of HashSet<InteractionArguments>
 | CloneSprite
+| ChangeResource of HashSet<InteractionArguments>
+| PullWithIt
+| KillIfHasLess of HashSet<InteractionArguments>
+| TeleportToExit
+
+type InteractionTypesDelayed =
+| StepBack
+| ReverseDirection
+| WrapAround
+
+type InteractionTypesTagged =
+| StepBackTagged
+| TurnAroundTagged
+| CollectResourceTagged of resource : int
+| KillIfFromAboveTagged of scorechange : int
+| KillIfOtherHasMoreTagged of resource : int * limit : int
+| KillSpriteTagged of scorechange : int
+| TransformToTagged of stype : int * scoreChange : int
+| CloneSpriteTagged
+| ChangeResourceTagged of resource : int * value : int
+| PullWithItTagged
+| KillIfHasLessTagged of resource : int * limit : int
+| WrapAroundTagged
+| ReverseDirectionTagged
+| TeleportToExitTagged
 
 type InteractionTypes =
-| DelayedInteraction of InteractionTypesDelayed
-| ImmediateInteraction of InteractionTypesImmediate
+| InteractionTypesDelayed of InteractionTypesDelayed
+| InteractionTypesImmediate of InteractionTypesImmediate
+| InteractionTypesImmediateTagged of InteractionTypesTagged
 
 type InteractionSetTypes =
-| Interaction of (string * string) * InteractionTypes list
-| TaggedInteraction of (int [] * int []) * InteractionTypes list
-| TaggedInteractionEOS of int [] * InteractionTypes list
+| Interaction of (string * string) * InteractionTypes
 
 type SpriteParserTypes =
 | SpriteSet of SpriteSetTypes list
 | TerminationSet of TerminationSetTypes list
 | InteractionSet of InteractionSetTypes list
-| LevelMappingSet of Map<char,string>
+| LevelMappingSet of Map<char,string list>
 
 
 module ColorsConstants =
@@ -184,8 +212,11 @@ module Inner =
 
     let rec many1Indents (same: Parser<_,_>) (up: Parser<_,_>) (stream: CharStream<_>) =
         let getIndent() =
-            let indent = stream.SkipNewlineThenWhitespace(4,false) // Returns -1 if not at newline.
-            if indent = -1 then stream.Column-1L |> int else indent // If at newline skip it, else set indent to column.
+            let mutable indentation = stream.SkipNewlineThenWhitespace(4, false)
+            while stream.Peek() = '#' do
+                stream.SkipRestOfLine(false) // skip comment
+                indentation <- stream.SkipNewlineThenWhitespace(4, false)
+            if indentation = -1 then stream.Column-1L |> int else indentation // If at newline skip it, else set indent to column.
 
         let indent = getIndent()
         let result = same stream
@@ -208,7 +239,7 @@ module Inner =
             loop [result.Result] ExpectationEnum.SAME_UP
         else Reply(result.Status,result.Error)
 
-    let resultSatisfies predicate msg (p: Parser<_,_>) : Parser<_,_> =
+    let inline resultSatisfies predicate msg (p: Parser<_,_>) : Parser<_,_> =
         let error = messageError msg
         fun stream ->
             let state = stream.State
@@ -218,8 +249,7 @@ module Inner =
                 stream.BacktrackTo(state) // backtrack to beginning
                 Reply(Error, error)
 
-    let resultChoose predicate msg (p: Parser<_,_>) : Parser<_,_> =
-        let error = messageError msg
+    let inline resultChoose predicate msg (p: Parser<_,_>) : Parser<_,_> =
         fun stream ->
             let state = stream.State
             let reply = p stream
@@ -228,50 +258,18 @@ module Inner =
                 | Some x -> Reply(x)
                 | None -> 
                     stream.BacktrackTo(state) // backtrack to beginning
-                    Reply(Error, error)
+                    Reply(Error, messageError msg)
             else
-                stream.BacktrackTo(state) // backtrack to beginning
-                Reply(Error, error)
+                Reply(reply.Status, reply.Error)
 
     let blanks = skipManySatisfy <| isAnyOf " "
-    let word = many1SatisfyL isAsciiLetter "word"
+    let identifier = many1Satisfy2L isAsciiLetter (fun x -> isAsciiLetter x || isAnyOf "_" x || isDigit x) "identifier"
     let pbool = stringCIReturn "true" true <|> stringCIReturn "false" false
 
-    let sprite_start = word .>> (blanks >>. skipChar '>' >>. blanks) |>> (fun x -> x.ToLower())
+    // TODO: Work on this more. Replace skipnewline with followedby newline or something like that.
+    let nl = (skipNewline >>. blanks) <|> eof <|> (skipChar '#' >>. skipRestOfLine false)
 
-    let attribute = 
-        choiceL [|    
-            attempt (skipStringCI "Immovable" >>. blanks |>> (fun _ -> MainClass Immovable));
-            attempt (skipStringCI "FlakAvatar" >>. blanks |>> (fun _ -> MainClass FlakAvatar));
-            attempt (skipStringCI "Bomber" >>. blanks |>> (fun _ -> MainClass Bomber));
-            attempt (skipStringCI "Spawnpoint" >>. blanks |>> (fun _ -> MainClass Spawnpoint));
-            attempt (skipStringCI "Missile" >>. blanks |>> (fun _ -> MainClass Missile));
-            attempt (skipStringCI "ShootAvatar" >>. blanks |>> (fun _ -> MainClass ShootAvatar));
-            attempt (skipStringCI "RandomNPC" >>. blanks |>> (fun _ -> MainClass RandomNPC));
-            attempt (skipStringCI "Flicker" >>. blanks |>> (fun _ -> MainClass Flicker));
-            attempt (skipStringCI "Resource" >>. blanks |>> (fun _ -> MainClass Resource));
-            attempt (skipStringCI "Door" >>. blanks |>> (fun _ -> MainClass Door));
-            attempt (skipStringCI "MovingAvatar" >>. blanks |>> (fun _ -> MainClass MovingAvatar));
-
-            attempt (skipStringCI "stype" >>. blanks >>. skipChar '=' >>. blanks >>. word .>> blanks |>> (fun x -> ShootType x));
-            attempt (skipStringCI "cooldown" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> (fun x -> Cooldown x));
-            attempt (skipStringCI "prob" >>. blanks >>. skipChar '=' >>. blanks >>. pfloat .>> blanks |>> (fun x -> Probability x));
-            attempt (skipStringCI "orientation" >>. blanks >>. skipChar '=' >>. blanks >>. OrientationConstants.orientation_parsers) .>> blanks ;
-            attempt (skipStringCI "color" >>. blanks >>. skipChar '=' >>. blanks >>. ColorsConstants.color_parsers) .>> blanks ;
-            attempt (skipStringCI "speed" >>. blanks >>. skipChar '=' >>. blanks >>. pfloat .>> blanks |>> (fun x -> Speed x));
-            attempt (skipStringCI "img" >>. blanks >>. skipChar '=' >>. blanks >>. (word .>> optional (pstring ".png")) .>> blanks |>> (fun x -> Image x));
-            attempt (skipStringCI "total" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> (fun x -> Total x));
-            attempt (skipStringCI "singleton" >>. blanks >>. skipChar '=' >>. blanks >>. pbool .>> blanks |>> (fun x -> Singleton x));
-            attempt (skipStringCI "shrinkfactor" >>. blanks >>. skipChar '=' >>. blanks >>. pfloat .>> blanks |>> (fun x -> ShrinkFactor x));
-            attempt (skipStringCI "limit" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> (fun x -> Limit x));
-            attempt (skipStringCI "physicstype" >>. blanks >>. skipChar '=' >>. blanks >>. 
-                (choice 
-                    [|skipStringCI "GridPhysics" .>> blanks |>> (fun x -> PhysicsType GridPhysics)|]));
-            |] "attribute"
-                
-    let nl = (newline |>> ignore) <|> eof
-
-    let sprite =
+    let distinction_identity =
         let distinction_func = 
             function
             | MainClass _ -> 0
@@ -289,134 +287,202 @@ module Inner =
             | Limit _ -> 11
             | PhysicsType _ -> 12
 
-        let manyAttrs =
-            manyTill attribute nl
-            |> resultChoose (
-                fun x ->
-                    let t = HashSet(x,HashIdentity.FromFunctions distinction_func (fun x y -> true))
-                    if t.Count = x.Length then Some t else None
-                ) "duplicate detected."
+        HashIdentity.FromFunctions distinction_func (fun x y -> true)
 
-        pipe4 sprite_start blanks manyAttrs blanks (fun a b c _ -> Sprite(a,c))
+
         
     let sprites = 
+        let sprite_start = identifier .>> (blanks >>. skipChar '>' >>. blanks) |>> (fun x -> x.ToLower())
+
+        let attribute = 
+            [|    
+            skipStringCI "Immovable" >>. blanks |>> (fun _ -> MainClass Immovable);
+            skipStringCI "FlakAvatar" >>. blanks |>> (fun _ -> MainClass FlakAvatar);
+            skipStringCI "Bomber" >>. blanks |>> (fun _ -> MainClass Bomber);
+            skipStringCI "Spawnpoint" >>. blanks |>> (fun _ -> MainClass Spawnpoint);
+            skipStringCI "Missile" >>. blanks |>> (fun _ -> MainClass Missile);
+            skipStringCI "ShootAvatar" >>. blanks |>> (fun _ -> MainClass ShootAvatar);
+            skipStringCI "RandomNPC" >>. blanks |>> (fun _ -> MainClass RandomNPC);
+            skipStringCI "Flicker" >>. blanks |>> (fun _ -> MainClass Flicker);
+            skipStringCI "Resource" >>. blanks |>> (fun _ -> MainClass Resource);
+            skipStringCI "Door" >>. blanks |>> (fun _ -> MainClass Door);
+            skipStringCI "MovingAvatar" >>. blanks |>> (fun _ -> MainClass MovingAvatar);
+            skipStringCI "Fleeing" >>. blanks |>> (fun _ -> MainClass Fleeing);
+            skipStringCI "Chaser" >>. blanks |>> (fun _ -> MainClass Chaser);
+            skipStringCI "Portal" >>. blanks |>> (fun _ -> MainClass Portal);
+
+            skipStringCI "stype" >>. blanks >>. skipChar '=' >>. blanks >>. identifier .>> blanks |>> (fun x -> ShootType x);
+            skipStringCI "cooldown" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> (fun x -> Cooldown x);
+            skipStringCI "prob" >>. blanks >>. skipChar '=' >>. blanks >>. pfloat .>> blanks |>> (fun x -> Probability x);
+            skipStringCI "orientation" >>. blanks >>. skipChar '=' >>. blanks >>. OrientationConstants.orientation_parsers .>> blanks ;
+            skipStringCI "color" >>. blanks >>. skipChar '=' >>. blanks >>. ColorsConstants.color_parsers .>> blanks ;
+            skipStringCI "speed" >>. blanks >>. skipChar '=' >>. blanks >>. pfloat .>> blanks |>> (fun x -> Speed x);
+            skipStringCI "img" >>. blanks >>. skipChar '=' >>. blanks >>. (identifier .>> optional (pstring ".png")) .>> blanks |>> (fun x -> Image x);
+            skipStringCI "total" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> (fun x -> Total x);
+            skipStringCI "singleton" >>. blanks >>. skipChar '=' >>. blanks >>. pbool .>> blanks |>> (fun x -> Singleton x);
+            skipStringCI "shrinkfactor" >>. blanks >>. skipChar '=' >>. blanks >>. pfloat .>> blanks |>> (fun x -> ShrinkFactor x);
+            skipStringCI "limit" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> (fun x -> Limit x);
+            skipStringCI "physicstype" >>. blanks >>. skipChar '=' >>. blanks >>. 
+                (choice 
+                    [|skipStringCI "GridPhysics" .>> blanks |>> (fun x -> PhysicsType GridPhysics)|]);
+            |] 
+            |> Array.map attempt
+            |> fun ar -> choiceL ar "attribute"
+
+        let sprite =
+            let manyAttrs =
+                manyTill attribute nl
+                |> resultChoose (
+                    fun x ->
+                        let t = HashSet(x,distinction_identity)
+                        if t.Count = x.Length then Some t else None
+                    ) "duplicate detected."
+
+            pipe4 sprite_start blanks manyAttrs blanks (fun a b c _ -> Sprite(a,c))
+        
         let rec y f x = f (y f) x // The Y Combinator
-        //let sprites_up = many1Indents sprite sprites_up |>> (fun x -> SubSprites x)
+        //let rec sprites_up = many1Indents sprite sprites_up |>> (fun x -> SubSprites x) Does not work
         let sprites_up = y (fun f -> many1Indents sprite f |>> (fun x -> SubSprites x))
         many1Indents sprite sprites_up
 
     let wrong_indent = (fun _ -> Reply(Error, messageError "child indents not aligned")) 
-
-    let level_mapping = pipe3 anyChar (blanks >>. (skipChar '>') >>. blanks) (word .>> blanks) (fun a b c -> a, c)
+    
     let level_mappings = 
+        let level_mapping = pipe3 anyChar (blanks >>. (skipChar '>') >>. blanks) (manyTill (identifier .>> blanks |>> fun x -> x.ToLower()) nl) (fun a b c -> a, c)
+
         many1Indents level_mapping wrong_indent 
         |> resultChoose
             (fun x ->
             let t = Map(x)
             if t.Count = x.Length then Some t else None) "duplicate entries in LevelMapping"
         |> resultSatisfies (fun m -> not <| m.ContainsKey 'w') "w cannot be reassigned from wall in LevelMapping"
-        |>> fun x -> x.Add('w',"wall")
+        |>> fun x -> x.Add('w',["wall"])
         |> resultSatisfies (fun m -> not <| m.ContainsKey 'A') "A cannot be reassigned from avatar in LevelMapping"
-        |>> fun x -> x.Add('A',"avatar")
+        |>> fun x -> x.Add('A',["avatar"])
 
     let to_gameendtype =
         function
         | true -> Win
         | false -> Lose
 
-    let termination_choices = 
-        let timeout_term = 
-            let timeout_start = skipStringCI "timeout" >>. blanks
-            let limit = skipStringCI "limit" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> (fun x -> TerminationLimit x)
-            let win = pstringCI "win" >>. blanks >>. skipChar '=' >>. blanks >>. pbool .>> blanks |>> (fun x -> TerminationWin <| to_gameendtype x)
-            timeout_start >>. manyTill (choiceL [|limit;win|] "limit or win for timeout") nl .>> spaces
-            |> resultChoose (
-                fun x ->
-                    let df =
-                        function
-                        | TerminationLimit _ -> 0
-                        | TerminationWin _ -> 1
-                        | _ -> failwith "Can't touch this."
-                    let t = HashSet(x,HashIdentity.FromFunctions df (fun x y -> true))
-                    if t.Count = x.Length then Some t else None
-                ) "duplicates detected"
-            |>> Timeout
+    let terminations = 
+        let termination_choices = 
+            let timeout_term = 
+                let timeout_start = skipStringCI "timeout" >>. blanks
+                let limit = skipStringCI "limit" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> (fun x -> TerminationLimit x)
+                let win = pstringCI "win" >>. blanks >>. skipChar '=' >>. blanks >>. pbool .>> blanks |>> (fun x -> TerminationWin <| to_gameendtype x)
+                timeout_start >>. manyTill (choiceL [|limit;win|] "limit or win for timeout") nl .>> spaces
+                |> resultChoose (
+                    fun x ->
+                        let df =
+                            function
+                            | TerminationLimit _ -> 0
+                            | TerminationWin _ -> 1
+                            | _ -> failwith "Can't touch this."
+                        let t = HashSet(x,HashIdentity.FromFunctions df (fun x y -> true))
+                        if t.Count = x.Length then Some t else None
+                    ) "duplicates detected"
+                |>> Timeout
 
-        let spritecounter_term =
-            let spritecounter_start = skipStringCI "SpriteCounter" >>. blanks
-            let stype = skipStringCI "stype" >>. blanks >>. skipChar '=' >>. blanks >>. word .>> blanks |>> (fun x -> TerminationSType x)
-            let limit = skipStringCI "limit" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> (fun x -> TerminationLimit x)
-            let win = pstringCI "win" >>. blanks >>. skipChar '=' >>. blanks >>. pbool .>> blanks |>> (fun x -> TerminationWin <| to_gameendtype x)
-            spritecounter_start >>. manyTill (choice [|stype;limit;win|]) nl .>> spaces
-            |> resultChoose (
-                fun x ->
-                    let df =
-                        function
-                        | TerminationSType _ -> 0
-                        | TerminationLimit _ -> 1
-                        | TerminationWin _ -> 2
-                        | _ -> failwith "Can't touch this."
-                    let t = HashSet(x,HashIdentity.FromFunctions df (fun x y -> true))
-                    if t.Count = x.Length then Some t else None
-                ) "duplicates detected"
-            |>> SpriteCounter
+            let spritecounter_term =
+                let spritecounter_start = skipStringCI "SpriteCounter" >>. blanks
+                let stype = skipStringCI "stype" >>. blanks >>. skipChar '=' >>. blanks >>. identifier .>> blanks |>> (fun x -> TerminationSType x)
+                let limit = skipStringCI "limit" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> (fun x -> TerminationLimit x)
+                let win = pstringCI "win" >>. blanks >>. skipChar '=' >>. blanks >>. pbool .>> blanks |>> (fun x -> TerminationWin <| to_gameendtype x)
+                spritecounter_start >>. manyTill (choice [|stype;limit;win|]) nl .>> spaces
+                |> resultChoose (
+                    fun x ->
+                        let df =
+                            function
+                            | TerminationSType _ -> 0
+                            | TerminationLimit _ -> 1
+                            | TerminationWin _ -> 2
+                            | _ -> failwith "Can't touch this."
+                        let t = HashSet(x,HashIdentity.FromFunctions df (fun x y -> true))
+                        if t.Count = x.Length then Some t else None
+                    ) "duplicates detected"
+                |>> SpriteCounter
 
-        let multi_spritecounter_term =
-            let spritecounter_start = skipStringCI "MultiSpriteCounter" >>. blanks
-            let stype = pipe2 (skipStringCI "stype" >>. pint32 |> resultSatisfies (fun x -> x > 0) "stype's number should be >= 0") (blanks >>. skipChar '=' >>. blanks >>. word .>> blanks) (fun a b -> TerminationNumberedSType(a,b))
-            let limit = skipStringCI "limit" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> (fun x -> TerminationLimit x)
-            let win = pstringCI "win" >>. blanks >>. skipChar '=' >>. blanks >>. pbool .>> blanks |>> (fun x -> TerminationWin <| to_gameendtype x)
-            spritecounter_start >>. manyTill (choice [|stype;limit;win|]) nl .>> spaces
-            |> resultChoose (
-                fun x ->
-                    let df =
-                        function
-                        | TerminationLimit _ -> -2
-                        | TerminationWin _ -> -1
-                        | TerminationNumberedSType(a,b) -> a
-                        | _ -> failwith "Can't touch this."
-                    let t = HashSet(x,HashIdentity.FromFunctions df (fun x y -> true))
-                    if t.Count = x.Length then Some t else None
-                ) "duplicates detected"
-            |>> MultiSpriteCounter
+            let multi_spritecounter_term =
+                let spritecounter_start = skipStringCI "MultiSpriteCounter" >>. blanks
+                let stype = pipe2 (skipStringCI "stype" >>. pint32 |> resultSatisfies (fun x -> x > 0) "stype's number should be >= 0") (blanks >>. skipChar '=' >>. blanks >>. identifier .>> blanks) (fun a b -> TerminationNumberedSType(a,b))
+                let limit = skipStringCI "limit" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> (fun x -> TerminationLimit x)
+                let win = pstringCI "win" >>. blanks >>. skipChar '=' >>. blanks >>. pbool .>> blanks |>> (fun x -> TerminationWin <| to_gameendtype x)
+                spritecounter_start >>. manyTill (choice [|stype;limit;win|]) nl .>> spaces
+                |> resultChoose (
+                    fun x ->
+                        let df =
+                            function
+                            | TerminationLimit _ -> -2
+                            | TerminationWin _ -> -1
+                            | TerminationNumberedSType(a,b) -> a
+                            | _ -> failwith "Can't touch this."
+                        let t = HashSet(x,HashIdentity.FromFunctions df (fun x y -> true))
+                        if t.Count = x.Length then Some t else None
+                    ) "duplicates detected"
+                |>> MultiSpriteCounter
 
-        choiceL [|
-            timeout_term;
-            spritecounter_term;
-            multi_spritecounter_term
-            |] "termination function"
-    let terminations = many1Indents termination_choices wrong_indent
+            choiceL [|
+                timeout_term;
+                spritecounter_term;
+                multi_spritecounter_term
+                |] "termination function"    
+    
+        many1Indents termination_choices wrong_indent
 
-    let not_eos = notFollowedByL (pstring "EOS") "EOS can't be on the left side of the input."
-    let interaction_start = pipe2 (not_eos >>. word) (blanks >>. word .>> (blanks >>. skipChar '>' >>. blanks)) (fun a b -> a,b)
+    let interactions = 
+        let interaction_choices = 
+            let dist =
+                HashIdentity.FromFunctions (
+                    function
+                    | InteractionScoreChange _ -> 0
+                    | InteractionResource _ -> 1
+                    | InteractionLimit _ -> 2
+                    | InteractionValue _ -> 3
+                    | InteractionStype _ -> 4
+                    ) (fun _ _ -> true)
 
-    let interaction_choices = 
-        choiceL [|    
-            attempt (skipStringCI "stepback" >>. blanks |>> fun _ -> DelayedInteraction StepBack);
-            attempt (skipStringCI "turnaround" >>. blanks |>> fun _ -> ImmediateInteraction TurnAround);
-            attempt (skipStringCI "killsprite" >>. blanks |>> fun x -> ImmediateInteraction KillSprite);
-            attempt (skipStringCI "collectResource" >>. blanks |>> fun x -> ImmediateInteraction <| CollectResource -1); // -1 is not used here, instead in fungen this type is used to send messages.
-            attempt (
-                pipe2
-                    (skipStringCI "killIfFromAbove" >>. blanks)
-                    (opt (skipStringCI "scoreChange" >>. blanks >>. skipChar '=' >>. blanks >>. pint32))
-                    (fun _ a -> 
-                        match a with
-                        | Some a -> ImmediateInteraction <| KillIfFromAbove a
-                        | None -> ImmediateInteraction <| KillIfFromAbove 0));
-            attempt (skipStringCI "scorechange" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> fun x -> ImmediateInteraction <| ScoreChange x);
-            attempt (skipStringCI "transformTo" >>. blanks >>. skipString "stype" >>. blanks >>. pchar '=' >>. blanks >>. word .>> blanks |>> fun x -> ImmediateInteraction <| TransformTo x);
-            attempt 
-                (pipe4 
-                    (skipStringCI "killIfOtherHasMore" >>. blanks >>. skipString "resource" >>. blanks >>. pchar '=' >>. blanks) 
-                    word 
-                    (blanks >>. skipString "limit" >>. blanks >>. pchar '=' >>. blanks)
-                    pint32 
-                    (fun _ a _ b -> ImmediateInteraction <| KillIfOtherHasMore (a,b)));
-            attempt (skipStringCI "clonesprite" >>. blanks |>> fun x -> ImmediateInteraction CloneSprite);
-            |] "effect"
-    let interaction = pipe4 interaction_start blanks (manyTill interaction_choices nl) blanks (fun a _ c _ -> Interaction(a,c))
-    let interactions = many1Indents interaction wrong_indent
+            let scoreChange = skipStringCI "scoreChange" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> InteractionScoreChange; 
+            let resource = skipStringCI "resource" >>. blanks >>. skipChar '=' >>. blanks >>. identifier .>> blanks |>> InteractionResource; 
+            let limit = skipStringCI "limit" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> InteractionLimit; 
+            let value = skipStringCI "value" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> InteractionValue;
+            let stype = skipStringCI "stype" >>. blanks >>. skipChar '=' >>. blanks >>. identifier .>> blanks |>> InteractionStype;
+            let interaction_arguments choices =
+                choices
+                |> Array.map attempt
+                |> fun ar -> choiceL ar "interaction argument"
+                |> fun x -> manyTill x nl
+                |> resultChoose (
+                    fun x ->
+                    let h = HashSet(x,dist)
+                    if h.Count = x.Length then Some h else None
+                    ) "duplicates detected"
+
+            [|    
+            skipStringCI "stepback" >>. blanks |>> fun _ -> InteractionTypesDelayed StepBack;
+            skipStringCI "turnaround" >>. blanks |>> fun _ -> InteractionTypesImmediate TurnAround;
+            skipStringCI "killsprite" >>. blanks >>. (interaction_arguments [|scoreChange|]) |>> fun x -> InteractionTypesImmediate <| KillSprite x;
+            skipStringCI "collectResource" >>. blanks |>> fun x -> InteractionTypesImmediate <| CollectResource;
+            skipStringCI "killIfFromAbove" >>. blanks >>. (interaction_arguments [|scoreChange|]) |>> fun x -> InteractionTypesImmediate <| KillIfFromAbove x;
+            skipStringCI "transformTo" >>. blanks >>. (interaction_arguments [|stype; scoreChange|]) |>> fun x -> InteractionTypesImmediate <| TransformTo x;
+            skipStringCI "killIfOtherHasMore" >>. blanks >>. (interaction_arguments [|resource; limit|]) |>> fun x -> InteractionTypesImmediate <| KillIfOtherHasMore x;
+            skipStringCI "clonesprite" >>. blanks |>> fun x -> InteractionTypesImmediate <| CloneSprite;
+            skipStringCI "pullWithIt" >>. blanks |>> fun x -> InteractionTypesImmediate <| PullWithIt;
+            skipStringCI "wrapAround" >>. blanks |>> fun x -> InteractionTypesDelayed <| WrapAround;
+            skipStringCI "changeResource" >>. blanks >>. (interaction_arguments [|resource; value|]) |>> fun x -> InteractionTypesImmediate <| ChangeResource x;
+            skipStringCI "killIfHasLess" >>. blanks >>. (interaction_arguments [|resource; limit|]) |>> fun x -> InteractionTypesImmediate <| KillIfHasLess x;
+            skipStringCI "reverseDirection" >>. blanks |>> fun x -> InteractionTypesDelayed <| ReverseDirection;
+            skipStringCI "teleportToExit" >>. blanks |>> fun x -> InteractionTypesImmediate <| TeleportToExit;
+            |] 
+            |> Array.map attempt
+            |> fun ar -> choiceL ar "effect" 
+
+        let not_eos = notFollowedByL (pstring "EOS") "EOS can't be on the left side of the input."
+        let interaction_start = pipe2 (not_eos >>. identifier) (blanks >>. identifier .>> (blanks >>. skipChar '>' >>. blanks)) (fun a b -> a,b)
+
+        let interaction = pipe4 interaction_start blanks interaction_choices blanks (fun a _ c _ -> Interaction(a,c))        
+        
+        many1Indents interaction wrong_indent |>> fun x -> x |> List.rev
 
     let sets = 
         many1Indents (
