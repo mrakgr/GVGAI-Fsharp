@@ -33,6 +33,8 @@ type MainClassTypes =
 | Fleeing
 | Chaser
 | Portal
+| Passive
+| OrientedFlicker
 
 type PhysicsTypes =
 | GridPhysics
@@ -100,7 +102,7 @@ type InteractionArguments =
 
 type InteractionTypesImmediate =
 | TurnAround
-| CollectResource
+| CollectResource of HashSet<InteractionArguments>
 | KillIfFromAbove of HashSet<InteractionArguments>
 | KillIfOtherHasMore of HashSet<InteractionArguments>
 | KillSprite of HashSet<InteractionArguments>
@@ -110,32 +112,39 @@ type InteractionTypesImmediate =
 | PullWithIt
 | KillIfHasLess of HashSet<InteractionArguments>
 | TeleportToExit
+| BounceForward
 
 type InteractionTypesDelayed =
 | StepBack
 | ReverseDirection
 | WrapAround
 
+type InteractionTypesSecondary =
+| StepBackSecondary
+
 type InteractionTypesTagged =
 | StepBackTagged
+| StepBackAndClearPullWithItTagged
 | TurnAroundTagged
-| CollectResourceTagged of resource : int
+| CollectResourceTagged of resource : int * scorechange : int
 | KillIfFromAboveTagged of scorechange : int
-| KillIfOtherHasMoreTagged of resource : int * limit : int
+| KillIfOtherHasMoreTagged of resource : int * limit : int * scorechange : int
 | KillSpriteTagged of scorechange : int
 | TransformToTagged of stype : int * scoreChange : int
 | CloneSpriteTagged
 | ChangeResourceTagged of resource : int * value : int
 | PullWithItTagged
-| KillIfHasLessTagged of resource : int * limit : int
+| KillIfHasLessTagged of resource : int * limit : int * scorechange : int
 | WrapAroundTagged
 | ReverseDirectionTagged
 | TeleportToExitTagged
+| BounceForwardTagged
 
 type InteractionTypes =
 | InteractionTypesDelayed of InteractionTypesDelayed
 | InteractionTypesImmediate of InteractionTypesImmediate
 | InteractionTypesImmediateTagged of InteractionTypesTagged
+| InteractionTypesSecondary of InteractionTypesSecondary
 
 type InteractionSetTypes =
 | Interaction of (string * string) * InteractionTypes
@@ -310,6 +319,8 @@ module Inner =
             skipStringCI "Fleeing" >>. blanks |>> (fun _ -> MainClass Fleeing);
             skipStringCI "Chaser" >>. blanks |>> (fun _ -> MainClass Chaser);
             skipStringCI "Portal" >>. blanks |>> (fun _ -> MainClass Portal);
+            skipStringCI "Passive" >>. blanks |>> (fun _ -> MainClass Passive);
+            skipStringCI "OrientedFlicker" >>. blanks |>> (fun _ -> MainClass OrientedFlicker);
 
             skipStringCI "stype" >>. blanks >>. skipChar '=' >>. blanks >>. identifier .>> blanks |>> (fun x -> ShootType x);
             skipStringCI "cooldown" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> (fun x -> Cooldown x);
@@ -355,10 +366,8 @@ module Inner =
             (fun x ->
             let t = Map(x)
             if t.Count = x.Length then Some t else None) "duplicate entries in LevelMapping"
-        |> resultSatisfies (fun m -> not <| m.ContainsKey 'w') "w cannot be reassigned from wall in LevelMapping"
-        |>> fun x -> x.Add('w',["wall"])
-        |> resultSatisfies (fun m -> not <| m.ContainsKey 'A') "A cannot be reassigned from avatar in LevelMapping"
-        |>> fun x -> x.Add('A',["avatar"])
+        |>> fun x -> if x.ContainsKey('w') = false then x.Add('w',["wall"]) else x
+        |>> fun x -> if x.ContainsKey('A') = false then x.Add('A',["avatar"]) else x
 
     let to_gameendtype =
         function
@@ -462,17 +471,19 @@ module Inner =
             skipStringCI "stepback" >>. blanks |>> fun _ -> InteractionTypesDelayed StepBack;
             skipStringCI "turnaround" >>. blanks |>> fun _ -> InteractionTypesImmediate TurnAround;
             skipStringCI "killsprite" >>. blanks >>. (interaction_arguments [|scoreChange|]) |>> fun x -> InteractionTypesImmediate <| KillSprite x;
-            skipStringCI "collectResource" >>. blanks |>> fun x -> InteractionTypesImmediate <| CollectResource;
+            skipStringCI "collectResource" >>. blanks >>. (interaction_arguments [|scoreChange|]) |>> fun x -> InteractionTypesImmediate <| CollectResource x;
             skipStringCI "killIfFromAbove" >>. blanks >>. (interaction_arguments [|scoreChange|]) |>> fun x -> InteractionTypesImmediate <| KillIfFromAbove x;
             skipStringCI "transformTo" >>. blanks >>. (interaction_arguments [|stype; scoreChange|]) |>> fun x -> InteractionTypesImmediate <| TransformTo x;
-            skipStringCI "killIfOtherHasMore" >>. blanks >>. (interaction_arguments [|resource; limit|]) |>> fun x -> InteractionTypesImmediate <| KillIfOtherHasMore x;
+            skipStringCI "killIfOtherHasMore" >>. blanks >>. (interaction_arguments [|resource; limit; scoreChange|]) |>> fun x -> InteractionTypesImmediate <| KillIfOtherHasMore x;
             skipStringCI "clonesprite" >>. blanks |>> fun x -> InteractionTypesImmediate <| CloneSprite;
             skipStringCI "pullWithIt" >>. blanks |>> fun x -> InteractionTypesImmediate <| PullWithIt;
             skipStringCI "wrapAround" >>. blanks |>> fun x -> InteractionTypesDelayed <| WrapAround;
             skipStringCI "changeResource" >>. blanks >>. (interaction_arguments [|resource; value|]) |>> fun x -> InteractionTypesImmediate <| ChangeResource x;
-            skipStringCI "killIfHasLess" >>. blanks >>. (interaction_arguments [|resource; limit|]) |>> fun x -> InteractionTypesImmediate <| KillIfHasLess x;
+            skipStringCI "killIfHasLess" >>. blanks >>. (interaction_arguments [|resource; limit; scoreChange|]) |>> fun x -> InteractionTypesImmediate <| KillIfHasLess x;
             skipStringCI "reverseDirection" >>. blanks |>> fun x -> InteractionTypesDelayed <| ReverseDirection;
             skipStringCI "teleportToExit" >>. blanks |>> fun x -> InteractionTypesImmediate <| TeleportToExit;
+            skipStringCI "bounceForward" >>. blanks |>> fun x -> InteractionTypesImmediate <| BounceForward;
+            skipStringCI "undoall" >>. blanks |>> fun x -> InteractionTypesSecondary <| StepBackSecondary;
             |] 
             |> Array.map attempt
             |> fun ar -> choiceL ar "effect" 

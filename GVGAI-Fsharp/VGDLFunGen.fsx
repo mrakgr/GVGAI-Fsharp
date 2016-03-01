@@ -91,34 +91,21 @@ type VGDLSpriteFont =
     member inline sprite.draw (spriteBatch: SpriteBatch) (score: string) = 
         spriteBatch.DrawString(sprite.font,score,sprite.font_position,Color.AliceBlue)
 
-let inline binary_search(ar:StateType[]) fpos lpos (value : int) selector = // Type annotations for speed.
-    let rec findRec fpos lpos =
-        if fpos > lpos then
-            -1
-        else
-            let mid = (fpos + lpos) / 2
-            let value' = selector ar.[mid]
-            if value < value' then
-                findRec fpos (mid-1)
-            else if value > value' then
-                findRec (mid+1) lpos
-            else
-                mid
-    findRec fpos lpos
-
 /// The MonoGame engine class. Pass the VGDL game description and level as constructor inputs.
 type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
     inherit Game()
 
-    let id_map, tree_map, level_mapping, tagged_eos, tagged_neos, termination_set, reverse_hierarchy, initializer_map_create =
+    let id_map, tree_map, level_mapping, tagged_eos, tagged_neos, termination_set, reverse_hierarchy, initializer_map_create, resource_limits, resource_list, reverse_id_map =
         runSematic gameDesc
 
     do for x in id_map do printfn "%A" x
     do printfn "%A" reverse_hierarchy
+    do tree_map |> Map.iter (fun k (v,_) -> printfn "%s, %A" (reverse_id_map.[k]) v)
 
     let mutable tick = 0
     let mutable score = 0
-    let mutable score_string = "Score: 0"
+
+    let avatar_id = id_map.["avatar"]
 
     let level_split = levelDesc.Split '\n' |> Array.map (fun x -> x.TrimEnd())
 
@@ -141,7 +128,7 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
 
     do this.IsMouseVisible <- true
 
-    // As a design choice, the entire state of the game resides in these triple buffered arrays.
+    // As a design choice, the entire state of the game resides in these quadruple buffered arrays.
     // The structs are unrolled neatly in blocks of contiguous memory for memory coalescing and fast iteration over them.
     // As this version is functional and the structs cannot be modified, only replaced inside the arrays.
 
@@ -167,28 +154,27 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
             tree_map 
             |> Map.filter (fun k v -> (fst v).singleton)
             |> Map.toArray 
-            |> Array.map (fun (k,(v,_)) -> id_map.[k])
+            |> Array.map (fun (k,(v,_)) -> k)
             |> fun x -> HashSet(x,HashIdentity.Structural)
         let add id (pos: Vector2) = queue.Add (id,pos)
         let process_queue () = 
             if queue.Count > 0 then
+                sprite_tracker_flag <- true // sprite_tracker needs updating
                 queue 
                 |> ResizeArray.partition(fun (x,_) -> singleton_sprites.Contains x) // Paritions the queue into singleton and nonsingleton sprites.
                 |> fun (s,nons) -> 
                     if s.Count > 0 then
                         s   |> ResizeArray.distinctBy (fun x -> fst x) // Pares down the singletons if more than one is present in the array.
                             |> ResizeArray.filter (fun (id,_) -> 
-                                if binary_search sprites 0 (sprite_index-1) id (fun x -> x.sprite2.id) < 0 then true else false
+                                if sprite_tracker.[id].Count = 0 then true else false
                                 ) // Filters out singletons present in the sprites array.
                             |> ResizeArray.iter (fun (id,pos) -> 
-                                sprites.[sprite_index].sprite3 <- initializer_map.Value.[id] pos
-                                sprite_tracker_flag <- true // sprite_tracker needs updating
+                                sprites.[sprite_index].sprite4 <- initializer_map.Value.[id] pos
                                 sprite_index <- sprite_index+1)
                     
                     nons 
                     |> ResizeArray.iter (fun (id,pos) -> 
-                        sprites.[sprite_index].sprite3 <- initializer_map.Value.[id] pos
-                        sprite_tracker_flag <- true // sprite_tracker needs updating
+                        sprites.[sprite_index].sprite4 <- initializer_map.Value.[id] pos
                         sprite_index <- sprite_index+1
                         ) // Non singleton sprites are just added without limit.
                 
@@ -202,19 +188,18 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
         let killsprite_manager_add i = queue.Add i
         let killsprite_manager_process () = // Queue based removal at indices. Identical to a hypothetical sprites.RemoveIndices(queue)
             if queue.Count > 0 then 
+                sprite_tracker_flag <- true // sprite_tracker needs updating
                 queue.Sort()
                 for i=queue.Count-2 downto 0 do
                     let m = queue.[i]
                     let n = queue.[i+1]
                     if m <> n then
                         sprite_index <- sprite_index-1
-                        sprites.[n].sprite3 <- sprites.[sprite_index].sprite3
-                        sprite_tracker_flag <- true // sprite_tracker needs updating
+                        sprites.[n].sprite4 <- sprites.[sprite_index].sprite4
                 
                 let n = queue.[0]
                 sprite_index <- sprite_index-1
-                sprites.[n].sprite3 <- sprites.[sprite_index].sprite3
-                sprite_tracker_flag <- true // sprite_tracker needs updating
+                sprites.[n].sprite4 <- sprites.[sprite_index].sprite4
                 queue.Clear()
 
         killsprite_manager_add, killsprite_manager_process
@@ -338,7 +323,7 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
             enemyShoot()
         | Spawnpoint ->
             enemySpawn()
-        | Flicker ->
+        | Flicker | OrientedFlicker ->
             flicker()
         | RandomNPC ->
             randomMove()
@@ -346,12 +331,12 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
             chase_or_flee 1.0f
         | Fleeing ->
             chase_or_flee -1.0f
-        | Door | Resource | Immovable | Portal | NoClass -> ()
+        | Door | Resource | Immovable | Portal | NoClass | Passive -> ()
         
         ns.toIm
 
 
-    let binary_effect_manager_process =
+    let binary_effect_manager_process_primaries, binary_effect_manager_process_secondaries =
         let width = graphics.PreferredBackBufferWidth
         let height = graphics.PreferredBackBufferHeight
         let l1, l2 = width/SPRITE_WIDTH, height/SPRITE_HEIGHT
@@ -359,6 +344,7 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
         if SPRITE_WIDTH <> 20 || SPRITE_HEIGHT <> 20 then failwith "Adjust this function!"
 
         let messages = ResizeArray() // An optimization so these are not reinstantiated constantly.
+        let messages_sec = ResizeArray()
         let pull_with_it_ar = ResizeArray() // I need this one to eliminate multiple same direction vectors in order to prevent the player from going too fast in a direction.
 
         /// Checks if the sprite is outside the window boundary.
@@ -372,149 +358,202 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
 
             is_sprite_outside_window_horizontal px py || is_sprite_outside_window_vertical px py
 
-        fun () ->
-            let add_sprites_to_buf() =
-                buf |> Array2D.iter (fun x -> x.Clear())
-                for i=0 to sprite_index-1 do
-                    let x = sprites.[i].sprite2.rect
-                    let px,py = x.X, x.Y
-                    let px',py' = px/SPRITE_WIDTH,py/SPRITE_HEIGHT
+        let add_sprites_to_buf() =
+            buf |> Array2D.iter (fun x -> x.Clear())
+            for i=0 to sprite_index-1 do
+                let x = sprites.[i].sprite2.rect
+                let px,py = x.X, x.Y
+                let px',py' = px/SPRITE_WIDTH,py/SPRITE_HEIGHT
                     
-                    for j= -1 to 1 do
-                        for k= -1 to 1 do
-                            let px' = px'+j
-                            let py' = py'+k // Shadowing
-                            if px' >= 0 && px' < l1 && py' >= 0 && py' < l2 then buf.[px',py'].Add(i)
+                for j= -1 to 1 do
+                    for k= -1 to 1 do
+                        let px' = px'+j
+                        let py' = py'+k // Shadowing
+                        if px' >= 0 && px' < l1 && py' >= 0 && py' < l2 then buf.[px',py'].Add(i)
 
-            let get_collisions_for i =
-                let ri = sprites.[i].sprite2.rect
-                let ri' = sprites.[i].sprite1.rect
-                let px, py = ri.X, ri.Y
-                if is_sprite_outside_window px py = false then
-                    let px', py' = px/SPRITE_WIDTH, py/SPRITE_HEIGHT
-                    let rb = buf.[px',py']
-                    [| // TODO: Optimize these computational expressions away by replacing them with preallocated ResizeArrays similar to the message one.
-                    for x in rb do
-                        if x <> i && 
-                           (let t = Point(0)
-                           Rectangle.Intersect(ri,sprites.[x].sprite1.rect).Size <> t) then
-                            yield x
-                    |],
-                    [|
-                    for x in rb do
-                        if x <> i && 
-                           (let t = Point(0)
-                           Rectangle.Intersect(ri,sprites.[x].sprite2.rect).Size <> t ||
-                           Rectangle.Intersect(ri,sprites.[x].sprite1.rect).Size <> t ||
-                           Rectangle.Intersect(ri',sprites.[x].sprite2.rect).Size <> t ||
-                           Rectangle.Intersect(ri',sprites.[x].sprite1.rect).Size <> t) then
-                            yield x
-                    |]
-                else [||],[||]
+        let get_collisions_for i =
+            let ri = sprites.[i].sprite2.rect
+            let ri' = sprites.[i].sprite1.rect
+            let px, py = ri.X, ri.Y
+            if is_sprite_outside_window px py = false then
+                let px', py' = px/SPRITE_WIDTH, py/SPRITE_HEIGHT
+                let rb = buf.[px',py']
+                [| // TODO: Optimize these computational expressions away by replacing them with preallocated ResizeArrays similar to the message one.
+                for x in rb do
+                    if x <> i && 
+                        (let t = Point(0)
+                        Rectangle.Intersect(ri,sprites.[x].sprite1.rect).Size <> t) then
+                        yield x
+                |],
+                [|
+                for x in rb do
+                    if x <> i && 
+                        (let t = Point(0)
+                        Rectangle.Intersect(ri,sprites.[x].sprite2.rect).Size <> t ||
+                        Rectangle.Intersect(ri,sprites.[x].sprite1.rect).Size <> t ||
+                        Rectangle.Intersect(ri',sprites.[x].sprite2.rect).Size <> t ||
+                        Rectangle.Intersect(ri',sprites.[x].sprite1.rect).Size <> t) then
+                        yield x
+                |]
+            else [||],[||]
 
-            let inline get_eos_boundary_crossing_for i  =
-                let ri = sprites.[i].sprite2.rect
-                let px, py = ri.X, ri.Y
-                is_sprite_outside_window px py
+        let get_collisions_for_secondaries i = 
+            // I really need pointers to structs badly. Too bad F# does not allow passing them by reference. 
+            // Should be added in the future: https://github.com/dotnet/roslyn/issues/118 https://github.com/dotnet/roslyn/pull/4042
+            // https://github.com/dotnet/roslyn/issues/5233
+            let ri = sprites.[i].sprite3.rect
+            let px, py = ri.X, ri.Y
+            if is_sprite_outside_window px py = false then
+                let px', py' = px/SPRITE_WIDTH, py/SPRITE_HEIGHT
+                let rb = buf.[px',py']
+                [| // TODO: Optimize these computational expressions away by replacing them with preallocated ResizeArrays similar to the message one.
+                for x in rb do
+                    if x <> i && 
+                        (let t = Point(0)
+                        Rectangle.Intersect(ri,sprites.[x].sprite3.rect).Size <> t) then
+                        yield x
+                |]
+            else [||]
 
+        let inline get_eos_boundary_crossing_for i  =
+            let ri = sprites.[i].sprite2.rect
+            let px, py = ri.X, ri.Y
+            is_sprite_outside_window px py
 
-            let interaction_function i = // messages_del and messages_im are insantiated at the beginning of binary_effect_manager_process
-                let mutable ns = VGDLMutableSprite.fromIm sprites.[i].sprite2
-                let ra' = sprites.[i].sprite1
-
-                for (x,o,j) in messages do
-                    match x with
-                    | StepBackTagged ->
-                        ns.position <- ra'.position
-                        pull_with_it_ar.Clear()
-                    | TurnAroundTagged ->
-                        ns.position.Y <- ns.position.Y + (SPRITE_HEIGHT |> float32)
-                        ns.velocity <- -ns.velocity
-                    | CollectResourceTagged resource -> // TODO: Do not forget to reverse this one.
-                        match ns.resources.TryFind(resource) with
-                        | Some v -> ns.resources <- ns.resources.Add(resource, v+1)
-                        | None -> ns.resources <- ns.resources.Add(resource, 1)
-                    | WrapAroundTagged ->
-                        ns.position <- Vector2((ns.position.X + BACKBUFFER_WIDTH_F) % BACKBUFFER_WIDTH_F, (ns.position.Y + BACKBUFFER_HEIGHT_F) % BACKBUFFER_HEIGHT_F)
-                    | PullWithItTagged ->
-                        pull_with_it_ar.Add(sprites.[j].sprite2.position-sprites.[j].sprite1.position)
-                    | KillSpriteTagged scoreChange -> 
-                        score <- score+scoreChange; score_string <- sprintf "Score: %i" score
-                        killsprite_manager_add i
-                    | TransformToTagged(stype,scoreChange) -> 
-                        score <- score+scoreChange; score_string <- sprintf "Score: %i" score
-                        killsprite_manager_add i; sprite_manager_add stype ra'.position
-                    | KillIfFromAboveTagged scoreChange -> 
-                        let rb = sprites.[j].sprite2
-                        let sec = Rectangle.Intersect(ns.rect,rb.rect_lower_half_horizontal)
-                        if sec.Width-(STANDARD_SPEED |> int) > sec.Height && 
-                            Rectangle.Intersect(ns.rect,rb.rect_upper_half_horizontal).Size = Point(0) then 
-                            score <- score+scoreChange; score_string <- sprintf "Score: %i" score
-                            killsprite_manager_add i
-                    | KillIfHasLessTagged(resource,limit) ->
-                        match ns.resources.TryFind(resource) with
-                        | Some v -> if v <= limit then killsprite_manager_add i
-                        | None -> if 0 <= limit then killsprite_manager_add i
-                    | KillIfOtherHasMoreTagged (resource,limit) -> 
-                        let rb = sprites.[j].sprite2
-                        match rb.resources.TryFind(resource) with
-                        | Some v -> if v >= limit then killsprite_manager_add i
-                        | None -> if 0 >= limit then killsprite_manager_add i
-                    | CloneSpriteTagged ->
-                        sprite_manager_add ra'.id ra'.position
-                    | ChangeResourceTagged(resource, value) ->
-                        ns.resources <- ns.resources.Add(resource, value)
-                    | ReverseDirectionTagged ->
-                        ns.velocity <- -ns.velocity
-                    | TeleportToExitTagged ->
-                        ns.position <- 
-                            let id = sprites.[j].sprite2.shootType
-                            let pos = 
-                                let t = binary_search sprites 0 (sprite_index-1) id (fun x -> x.sprite2.id)
-                                if t < 0 then failwith "Cannot find an exit in TeleportToExit!"
-                                t
-                            let rec id_collect accum i dir =
-                                if i >= 0 && i < sprite_index then 
-                                    if id = sprites.[i].sprite2.id then id_collect (pos::accum) (i+dir) dir
-                                    else accum
-                                else accum
-                            
-                            List.append (id_collect [] pos 1) (id_collect [] (pos-1) -1)
-                            |> fun x -> x.[rng.Next(0,x.Length)]
-                            |> fun x -> sprites.[x].sprite2.position
+        let inline get_eos_boundary_crossing_for_secondary i  =
+            let ri = sprites.[i].sprite3.rect
+            let px, py = ri.X, ri.Y
+            is_sprite_outside_window px py
 
 
-                if pull_with_it_ar.Count > 0 then
-                    ns.position <- ns.position + pull_with_it_ar.[rng.Next(0, pull_with_it_ar.Count)]
+        let interaction_function i = // messages_del and messages_im are insantiated at the beginning of binary_effect_manager_process
+            
+            let mutable ns = VGDLMutableSprite.fromIm sprites.[i].sprite2
+            let ra' = sprites.[i].sprite1
+
+            let add_resource resource value =
+                let maxr = resource_limits.[resource]
+                match ns.resources.TryFind resource with
+                | Some v -> ns.resources <- ns.resources.Add(resource, min maxr (value+v) |> fun v -> max 0 v)
+                | None -> ns.resources <- ns.resources.Add(resource, min maxr value |> fun v -> max 0 v)
+
+            let change_score v =
+                score <- score+v
+
+            for (x,o,j) in messages do
+                match x with
+                | StepBackTagged ->
+                    ns.position <- ra'.position
+                | StepBackAndClearPullWithItTagged -> // If PullWithIt exists, this gets triggered instead of StepBackTagged.
+                    ns.position <- ra'.position
                     pull_with_it_ar.Clear()
-                sprites.[i].sprite3 <- ns.toIm
+                | TurnAroundTagged ->
+                    ns.position.Y <- ns.position.Y + (SPRITE_HEIGHT |> float32)
+                    ns.velocity <- -ns.velocity
+                | CollectResourceTagged(resource, scoreChange) ->
+                    add_resource resource 1
+                    change_score scoreChange
+                | WrapAroundTagged ->
+                    ns.position <- Vector2((ns.position.X + BACKBUFFER_WIDTH_F) % BACKBUFFER_WIDTH_F, (ns.position.Y + BACKBUFFER_HEIGHT_F) % BACKBUFFER_HEIGHT_F)
+                | PullWithItTagged ->
+                    pull_with_it_ar.Add(sprites.[j].sprite2.grid-sprites.[j].sprite1.grid)
+                | KillSpriteTagged scoreChange -> 
+                    change_score scoreChange
+                    killsprite_manager_add i
+                | TransformToTagged(stype,scoreChange) -> 
+                    change_score scoreChange
+                    killsprite_manager_add i; sprite_manager_add stype ra'.position
+                | KillIfFromAboveTagged scoreChange -> 
+                    let rb = sprites.[j].sprite2
+                    let sec = Rectangle.Intersect(ns.rect,rb.rect_lower_half_horizontal)
+                    if sec.Width-(STANDARD_SPEED |> int) > sec.Height && 
+                        Rectangle.Intersect(ns.rect,rb.rect_upper_half_horizontal).Size = Point(0) then 
+                        change_score scoreChange
+                        killsprite_manager_add i
+                | KillIfHasLessTagged(resource,limit,scoreChange) ->
+                    match ns.resources.TryFind(resource) with
+                    | Some v -> if v <= limit then killsprite_manager_add i; change_score scoreChange
+                    | None -> if 0 <= limit then killsprite_manager_add i; change_score scoreChange
+                | KillIfOtherHasMoreTagged (resource,limit,scoreChange) -> 
+                    let rb = sprites.[j].sprite2
+                    match rb.resources.TryFind(resource) with
+                    | Some v -> if v >= limit then killsprite_manager_add i; change_score scoreChange
+                    | None -> if 0 >= limit then killsprite_manager_add i; change_score scoreChange
+                | CloneSpriteTagged ->
+                    sprite_manager_add ra'.id ra'.position
+                | ChangeResourceTagged(resource, value) ->
+                    add_resource resource value
+                | ReverseDirectionTagged ->
+                    ns.velocity <- -ns.velocity
+                | TeleportToExitTagged ->
+                    ns.position <- 
+                        let id = sprites.[j].sprite2.shootType
+                        sprite_tracker.[id]
+                        |> fun x -> x.[rng.Next(0,x.Count)]
+                        |> fun x -> sprites.[x].sprite2.position
+                | BounceForwardTagged ->
+                    ns.position <- ns.position + sprites.[j].sprite2.grid-sprites.[j].sprite1.grid
 
+
+            if pull_with_it_ar.Count > 0 then
+                ns.position <- ns.position + pull_with_it_ar.[rng.Next(0, pull_with_it_ar.Count)]
+                pull_with_it_ar.Clear()
+            sprites.[i].sprite3 <- ns.toIm
+
+        let interaction_function_secondary i = // messages_del and messages_im are insantiated at the beginning of binary_effect_manager_process
+            let mutable ns = VGDLMutableSprite.fromIm sprites.[i].sprite3
+            let ra' = sprites.[i].sprite1
+
+            for (x,j) in messages_sec do
+                match x with
+                | StepBackSecondary -> ns.position <- ra'.position
+
+            sprites.[i].sprite4 <- ns.toIm
+
+        let process_primaries() =
             add_sprites_to_buf()
             for i=0 to sprite_index-1 do
-                let cols_del, cols_im = get_collisions_for i
+                let cols_del,cols_im = get_collisions_for i
                 let idi = sprites.[i].sprite1.id
                 messages.Clear()
                 if get_eos_boundary_crossing_for i then 
-                    let f,s = tagged_eos
-                    for (l,r) in f.[idi] do messages.Add((l,r,-1))
-                    for (l,r) in s.[idi] do messages.Add((l,r,-1))
+                    let im,del,sec = tagged_eos
+                    for (l,r) in im.[idi] do messages.Add((l,r,-1))
+                    for (l,r) in del.[idi] do messages.Add((l,r,-1))
                 for j in cols_im do
                     let idj = sprites.[j].sprite1.id
-                    let f,s = tagged_neos
-                    for (l,r) in f.[idi,idj] do messages.Add((l,r,j))
+                    let im,del,sec = tagged_neos
+                    for (l,r) in im.[idi,idj] do messages.Add((l,r,j))
                 for j in cols_del do
                     let idj = sprites.[j].sprite1.id
-                    let f,s = tagged_neos
-                    for (l,r) in s.[idi,idj] do messages.Add((l,r,j))
+                    let im,del,sec = tagged_neos
+                    for (l,r) in del.[idi,idj] do messages.Add((l,r,j))
 
                 messages |> ResizeArray.sortBy (fun (_,x,_) -> x)
                 interaction_function i
+
+        let process_secondaries() =
+            for i=0 to sprite_index-1 do
+                let cols_sec = get_collisions_for_secondaries i
+                let idi = sprites.[i].sprite1.id
+                messages_sec.Clear()
+                if get_eos_boundary_crossing_for_secondary i then 
+                    let im,del,sec = tagged_eos
+                    for l in sec.[idi] do messages_sec.Add((l,-1))
+                for j in cols_sec do
+                    let idj = sprites.[j].sprite1.id
+                    let im,del,sec = tagged_neos
+                    for l in sec.[idi,idj] do messages_sec.Add((l,j))
+
+                interaction_function_secondary i
+
+        process_primaries, process_secondaries
 
     let terminators_manager_process =
         let get_counts() =
             let c = Array.zeroCreate tree_map.Count
             for i=0 to sprite_index-1 do do
-                for x in reverse_hierarchy.[sprites.[i].sprite3.id] do
+                for x in reverse_hierarchy.[sprites.[i].sprite4.id] do
                     c.[x] <- c.[x]+1
             c
 
@@ -535,7 +574,8 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
                             else true
                         if test 0 then win_or_loss
                         else loop (i+1)
-                    | TimeoutTagged _ -> failwith "Timeout not implemented!"
+                    | TimeoutTagged(limit, win_or_loss) -> 
+                        if tick >= limit then win_or_loss else loop (i+1)
                 else Continue
             loop 0
 
@@ -578,7 +618,8 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
 
         for i=0 to sprite_index-1 do 
             sprites.[i].sprite2 <- unary_transition i
-        binary_effect_manager_process() // The interaction set effects
+        binary_effect_manager_process_primaries() // The interaction set effects
+        binary_effect_manager_process_secondaries() // Specially made for the UndoAll effect
         sprite_manager_process() // Manages additions
         killsprite_manager_process() // Manages deletions
 
@@ -593,7 +634,7 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
                 this.Exit()
 
         for i=0 to sprite_index-1 do 
-            sprites.[i].sprite1 <- sprites.[i].sprite3
+            sprites.[i].sprite1 <- sprites.[i].sprite4
 
         if sprite_tracker_flag then
             Array.Sort(sprites,0,sprite_index,{new IComparer<StateType> with member t.Compare(x,y) = compare x.sprite1.id y.sprite1.id})
@@ -606,6 +647,8 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
 
             sprite_tracker_flag <- false
 
+        tick <- tick+1
+
         base.Update(gameTime)
 
     override this.Draw(gameTime) = 
@@ -614,62 +657,66 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
         spriteBatch.Begin()
 
         for i=0 to sprite_index-1 do sprites.[i].sprite1.draw spriteBatch
-        printer.draw spriteBatch score_string
+
+        let printer_string =                 
+            let sb = System.Text.StringBuilder() // String builder is mutable.
+            sb.AppendFormat("Tick: {0}, Score: {1}", tick/TICK_ADJUSTER, score) |> ignore
+            if resource_list.Length > 0 then sb.Append(", ") |> ignore
+            for (k,v) in resource_list do
+                let k = Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(k)
+                match sprites.[sprite_tracker.[avatar_id].[0]].sprite4.resources.TryFind v with
+                | Some q -> sb.AppendFormat("{0}: {1}, ", k, q) |> ignore
+                | None -> sb.AppendFormat("{0}: {1}, ", k, 0) |> ignore
+            sb.ToString()
+        
+        printer.draw spriteBatch printer_string
 
         spriteBatch.End()
         base.Draw(gameTime)
 
 let aliens_spec = """BasicGame
-    SpriteSet
-        bullet > color=RED img=bullet
-            sitting  > Immovable
-            random   > RandomNPC speed=0.25
-            straight > Missile   speed=0.5 img=missile
-                vertical   > orientation=UP
-                horizontal > orientation=LEFT
-        structure > Immovable
-            goal  > color=GREEN img=goal
-            portalentry > Portal img=portal
-                entry1 > stype=exit1 color=LIGHTBLUE
-                entry2 > stype=exit2 color=BLUE
-            portalexit  > color=BROWN img=door
-                exit1  >
-                exit2  >
-    InteractionSet
-        random wall      > stepBack
-        random structure > stepBack
-        avatar wall      > stepBack
-        goal   avatar    > killSprite scoreChange=1
-        avatar bullet    > killSprite
-        straight wall    > reverseDirection
-        avatar portalentry > teleportToExit
+  SpriteSet         
+    goal  > Door color=GREEN img=goal
+    key   > Immovable color=ORANGE img=key
+    sword > OrientedFlicker limit=5 singleton=True img=sword
+    movable >
+      avatar  > ShootAvatar   stype=sword 
+        nokey   > img=avatar
+        withkey > color=ORANGE img=alien
+      enemy >  img=monster
+        monsterQuick > RandomNPC cooldown=2
+        monsterNormal > RandomNPC cooldown=4
+        monsterSlow > RandomNPC cooldown=8
 
-    TerminationSet
-        SpriteCounter stype=goal   limit=0 win=True
-        SpriteCounter stype=avatar limit=0 win=False
+  LevelMapping
+    G > goal
+    + > key        
+    A > nokey
+    1 > monsterQuick
+    2 > monsterNormal
+    3 > monsterSlow
 
-    LevelMapping
-        h > horizontal
-        v > vertical
-        x > sitting
-        r > random
-        G > goal
-        i > entry1
-        I > entry2
-        o > exit1
-        O > exit2"""
+  InteractionSet
+    movable wall  > stepBack
+    nokey goal    > stepBack
+    goal withkey  > killSprite scoreChange=1
+    enemy sword > killSprite scoreChange=2
+    avatar enemy > killSprite scoreChange=-1
+    key  avatar   > killSprite scoreChange=1
+    nokey key     > transformTo stype=withkey                
+  TerminationSet
+    SpriteCounter stype=goal   win=True
+    SpriteCounter stype=avatar win=False"""
 
-let aliens_text = """wwwwwwwwwwwwwwwwwww
-w  h    r   wI    w
-w  o    wwww  w w w
-wwwww  v         vw
-w  ow   v w       w
-wA iw     w  h v  w
-wwwww    h     r  w
-w           o     w
-w  i w ww   wwwwwww
-w   h v     wO   Gw
-wwwwwwwwwwwwwwwwwww"""
+let aliens_text = """wwwwwwwwwwwww
+wA       w  w
+w  w        w
+w   w   w +ww
+www w2  wwwww
+w       w G w
+w 2        ww
+w     2    ww
+wwwwwwwwwwwww"""
 
 let outcome = ref (0,Continue)
 let g = new VGDLGame(aliens_spec,aliens_text,outcome)

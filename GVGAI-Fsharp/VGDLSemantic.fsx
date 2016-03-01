@@ -15,6 +15,7 @@ open System.Collections.Generic
 open System.Linq
 
 let STANDARD_SPEED = 3.0f
+let TICK_ADJUSTER = 6
 
 type VGDLSprite =
     struct
@@ -98,11 +99,12 @@ type StateType =
     val mutable sprite1 : VGDLSprite
     val mutable sprite2 : VGDLSprite
     val mutable sprite3 : VGDLSprite
-    new (a1,a2,a3) = {sprite1=a1;sprite2=a2;sprite3=a3}
-    new (sprite1) = {sprite1=sprite1;sprite2=VGDLSprite.def;sprite3=VGDLSprite.def}
+    val mutable sprite4 : VGDLSprite
+    new (a1,a2,a3,a4) = {sprite1=a1;sprite2=a2;sprite3=a3;sprite4=a4}
+    new (sprite1) = {sprite1=sprite1;sprite2=VGDLSprite.def;sprite3=VGDLSprite.def;sprite4=VGDLSprite.def}
     end
 
-    static member def = StateType(VGDLSprite.def,VGDLSprite.def,VGDLSprite.def)
+    static member def = StateType(VGDLSprite.def,VGDLSprite.def,VGDLSprite.def,VGDLSprite.def)
 
 type private MainRec = 
     {
@@ -164,7 +166,7 @@ let runSematic gameDesc =
                     |> function LevelMappingSet x -> x | _ -> failwith "Won't trigger."
         }
 
-    let id_map, tree_map =
+    let id_map, tree_map, reverse_id_map =
         /// Flattens the tree and propagates the parent attributes to the children unless they are overriden.
         let rec flattenSpriteSet (spriteset: _ list) =
             let map_add_if (m : Map<_,_>) (k, v) =
@@ -238,18 +240,16 @@ let runSematic gameDesc =
             }
 
         let sprite_names, hierarchy_map = mapHierarchy tree_rec.sprite_set
-        let id_map = 
+        
+        let id_map, reverse_id_map = 
             "avatar"::"wall"::sprite_names 
             |> List.toArray
             |> Array.distinct 
             |> Array.rev
             |> Array.mapi (fun i x -> x,i)
             |> fun x -> x.ToDictionary((fun (k,v) -> k),(fun (k,v) -> v), HashIdentity.Structural)
-
-//            sprite_names |> Set |> fun x -> x.Add("avatar").Add("wall") 
-//            |> Set.toArray |> Array.mapi (fun i x -> x,i) |> Map.ofArray
-//            |> fun x -> Dictionary(x,HashIdentity.Structural)
-
+            |> fun x ->
+                x, x.ToArray() |> fun x -> x.ToDictionary((fun kv -> kv.Value),(fun kv -> kv.Key), HashIdentity.Structural)
 
         let flat_spriteset = 
             flattenSpriteSet tree_rec.sprite_set
@@ -261,11 +261,15 @@ let runSematic gameDesc =
                     Seq.fold (
                         fun state v -> 
                             match v with
-                            | MainClass (ShootAvatar | FlakAvatar | MovingAvatar as x) -> {state with mclass = x; image="avatar"}
+                            | MainClass (ShootAvatar | FlakAvatar | MovingAvatar as x) -> 
+                                if state.image = "" then
+                                    {state with mclass = x; image="avatar"}
+                                else
+                                    {state with mclass = x}
                             | MainClass x -> {state with mclass = x}
                             | ShootType x -> {state with shootType = id_map.[x]}
-                            | Cooldown x -> {state with cooldown = x}
-                            | Probability x -> {state with probability = x}
+                            | Cooldown x -> {state with cooldown = x*TICK_ADJUSTER}
+                            | Probability x -> {state with probability = 1.0 - (1.0-x) ** (1.0 / (float TICK_ADJUSTER))}
                             | Orientation (x,y) -> {state with orientation = x,y}
                             | Color (x,y,z) -> {state with color = x,y,z}
                             | Speed x -> {state with speed = x}
@@ -277,19 +281,30 @@ let runSematic gameDesc =
                             | PhysicsType x -> state // TODO: This will do nothing for now.
                             ) default_record v
                 )
+            |> Map.toArray |> Array.map (fun (k,v) -> id_map.[k],v) |> Map.ofArray
+            |> fun map ->
+                map |> Map.map (fun k v -> 
+                    match v.mclass with
+                    | Spawnpoint -> 
+                        if v.shootType = -1 then failwith "Spawnpoints should always have stypes defined."
+                        if v.cooldown = 0 then {v with cooldown = map.[v.shootType].cooldown} else v
+                    | _ -> v
+                    )
 
         let tree_map = 
             let t1 = flat_spriteset |> Map.toArray
-            let t2 = hierarchy_map |> Map.toArray
+            let t2 = hierarchy_map |> Map.toArray |> Array.map (fun (k,v) -> id_map.[k],v |> List.map (fun x -> id_map.[x])) |> Array.sortBy (fun (k,v) -> k)
+            let id_wall = id_map.["wall"]
+            let id_avatar = id_map.["avatar"]
             Array.map2 (fun (k1,v1) (k2,v2) -> if k1 = k2 then k1,(v1,v2) else failwith "Maps are not ordered") t1 t2
             |> Map.ofArray
-            |> fun x -> if x.ContainsKey("wall") = false then x.Add("wall",({default_record with image="wall"},[])) else x
-            |> fun x -> if x.ContainsKey("avatar") = false then x.Add("avatar",(default_record,[])) else x
+            |> fun x -> if x.ContainsKey(id_wall) = false then x.Add(id_wall,({default_record with image="wall"},[])) else x
+            |> fun x -> if x.ContainsKey(id_avatar) = false then x.Add(id_avatar,(default_record,[])) else x
             
-        id_map, tree_map
+        id_map, tree_map, reverse_id_map
 
     let id_hierarchy_map = 
-        tree_map |> Map.map ( fun  parent (_,children) -> parent::children |> List.toArray |> Array.map(fun x -> id_map.[x]))
+        tree_map |> Map.map ( fun  parent (_,children) -> parent::children |> List.toArray)
 
     let eos, neos =
         let rec loop (eos: _ list) (neos: _ list)=
@@ -299,7 +314,15 @@ let runSematic gameDesc =
                 | Interaction((_,"EOS"),_) -> loop (x::eos) neos xs
                 | Interaction _ -> loop eos (x::neos) xs
             | [] -> eos,neos
-        loop [] [] (tree_rec.interaction_set)
+        loop [] [] tree_rec.interaction_set
+
+    let pull_with_it_exists = // If the PullWithIt interaction exists then StepBack gets converted to StepBackAndClearPullWithItTagged instead of StepBackTagged
+        let rec loop =
+            function
+            | (Interaction(_,InteractionTypesImmediate PullWithIt))::xs -> true // Pattern matching is great.
+            | x::xs -> loop xs
+            | [] -> false
+        loop tree_rec.interaction_set
 
     let interaction_tagger l r =
         let tag_hashset hashset =
@@ -321,54 +344,67 @@ let runSematic gameDesc =
                
         function
         | TurnAround -> TurnAroundTagged
-        | CollectResource -> CollectResourceTagged r
+        | CollectResource x -> let t = tag_hashset x in CollectResourceTagged(r, t.scoreChange)
         | KillIfFromAbove x -> let t = tag_hashset x in KillIfFromAboveTagged t.scoreChange
-        | KillIfOtherHasMore x -> let t = tag_hashset x in KillIfOtherHasMoreTagged(t.resource,t.limit)
+        | KillIfOtherHasMore x -> let t = tag_hashset x in KillIfOtherHasMoreTagged(t.resource,t.limit,t.scoreChange)
         | KillSprite x -> let t = tag_hashset x in KillSpriteTagged t.scoreChange
         | TransformTo x -> let t = tag_hashset x in TransformToTagged(t.stype,t.scoreChange)
         | CloneSprite -> CloneSpriteTagged
         | ChangeResource x -> let t = tag_hashset x in ChangeResourceTagged(t.resource,t.value)
         | PullWithIt -> PullWithItTagged
-        | KillIfHasLess x -> let t = tag_hashset x in KillIfHasLessTagged(t.resource,t.limit)
+        | KillIfHasLess x -> let t = tag_hashset x in KillIfHasLessTagged(t.resource,t.limit,t.scoreChange)
         | TeleportToExit -> TeleportToExitTagged
+        | BounceForward -> BounceForwardTagged
 
     let interaction_tagger_del l r =
         function
-        | StepBack -> StepBackTagged
+        | StepBack -> if pull_with_it_exists then StepBackAndClearPullWithItTagged else StepBackTagged
         | WrapAround -> WrapAroundTagged
         | ReverseDirection -> ReverseDirectionTagged           
 
     let tagged_eos = 
         let buf_im = Array.init tree_map.Count (fun _ -> ResizeArray())
         let buf_del = Array.init tree_map.Count (fun _ -> ResizeArray())
+        let buf_sec = Array.init tree_map.Count (fun _ -> ResizeArray())
         eos |> List.iteri 
             (fun i (Interaction((l,r),attrs)) ->
-            for x in id_hierarchy_map.[l] do
+            let i=i*10
+            for x in id_hierarchy_map.[id_map.[l]] do
                 match attrs with
                 | InteractionTypesImmediate attrs -> buf_im.[x].Add(interaction_tagger x -1 attrs, i)
                 | InteractionTypesDelayed attrs -> buf_del.[x].Add(interaction_tagger_del x -1 attrs, i)
+                | InteractionTypesSecondary attrs -> buf_sec.[x].Add(attrs)
                 | _ -> failwith "Can't match this.")
             
         buf_im |> Array.map (fun x -> x.ToArray()), // Plain arrays are faster than ResizeArrays for iterating over them.
-        buf_del |> Array.map (fun x -> x.ToArray())
+        buf_del |> Array.map (fun x -> x.ToArray()),
+        buf_sec |> Array.map (fun x -> x.ToArray())
 
     let tagged_neos = 
         let buf_im = Array2D.init tree_map.Count tree_map.Count (fun _ _ -> ResizeArray())
         let buf_del = Array2D.init tree_map.Count tree_map.Count (fun _ _ -> ResizeArray())
+        let buf_sec = Array2D.init tree_map.Count tree_map.Count (fun _ _ -> ResizeArray())
         neos |> List.iteri 
             (fun i (Interaction((l,r),attrs)) ->
-                for x in id_hierarchy_map.[l] do
-                    for y in id_hierarchy_map.[r] do
+                let i=i*10
+                for x in id_hierarchy_map.[id_map.[l]] do
+                    for y in id_hierarchy_map.[id_map.[r]] do
                         match attrs with
                         | InteractionTypesImmediate attrs -> 
                             match attrs with
-                            | CollectResource -> buf_im.[y,x].Add(interaction_tagger y x attrs, i) // Collect resource is a special case that work on the right argument. Here I am reversing it.
+                            | CollectResource _ -> buf_im.[y,x].Add(interaction_tagger y x attrs, i) // Collect resource is a special case that work on the right argument. Here I am reversing it.
+                            | BounceForward -> buf_im.[x,y].Add(interaction_tagger x y attrs, i); buf_im.[y,x].Add(StepBackTagged, i+1)
                             | _ -> buf_im.[x,y].Add(interaction_tagger x y attrs, i)
-                        | InteractionTypesDelayed attrs -> buf_del.[x,y].Add(interaction_tagger_del x y attrs, i)
+                        | InteractionTypesDelayed attrs -> 
+                            match attrs with
+                            | StepBack -> buf_im.[x,y].Add(interaction_tagger_del x y attrs, i); buf_sec.[x,y].Add(StepBackSecondary)
+                            | _ -> buf_del.[x,y].Add(interaction_tagger_del x y attrs, i)
+                        | InteractionTypesSecondary attrs -> buf_sec.[x,y].Add(attrs)
                         | _ -> failwith "Can't match this.")
 
         buf_im |> Array2D.map (fun x -> x.ToArray()), // Plain arrays are faster than ResizeArrays for iterating over them.
-        buf_del |> Array2D.map (fun x -> x.ToArray())
+        buf_del |> Array2D.map (fun x -> x.ToArray()),
+        buf_sec |> Array2D.map (fun x -> x.ToArray())
 
     let reverse_hierarchy = // Computes the reverse hierarchy from children to parents. Needed for TerminationSet counters.
         let d = Dictionary<int,HashSet<int>>(HashIdentity.Structural)
@@ -376,8 +412,8 @@ let runSematic gameDesc =
             let parent,children = 
                 (x.Key,x.Value |> snd)
                 |> fun (k,v) ->
-                    id_map.[k],
-                    v |> List.toArray |> Array.map (fun x -> id_map.[x])
+                    k,
+                    v |> List.toArray
 
             match d.TryGetValue parent with
             | true, dh -> ()
@@ -398,9 +434,9 @@ let runSematic gameDesc =
         Map(
             [|
             for p in tree_map do
-                let sprite_name,r = p.Key, p.Value |> fst
+                let sprite_id,r = p.Key, p.Value |> fst
                 let texture = 
-                    match texture_dict.TryGetValue (image_name_of sprite_name) with
+                    match texture_dict.TryGetValue (image_name_of sprite_id) with
                     | true, v -> Some v
                     | false, _ -> None
                 let velocity = 
@@ -415,7 +451,7 @@ let runSematic gameDesc =
                         texture,
                         position=position,
                         velocity=velocity,
-                        id=id_map.[sprite_name],
+                        id=sprite_id,
                         elapsed_time=0,
                         total=r.total,
                         orientation=Vector2(1.0f,1.0f),
@@ -428,7 +464,7 @@ let runSematic gameDesc =
                         duration=0
                         )
 
-                yield id_map.[sprite_name], init
+                yield sprite_id, init
                 |])
         |> fun x -> Dictionary(x,HashIdentity.Structural)
 
@@ -457,7 +493,7 @@ let runSematic gameDesc =
                     | TerminationWin x -> win <- x
                     | _ -> failwith "Should not be in Timeout."
                     )
-                TimeoutTagged(limit,win)
+                TimeoutTagged(limit*TICK_ADJUSTER,win) // I'll increment the limit here to roughly match the GVGAI library which I think is set to 20fps - roughly 3x slower.
             | SpriteCounter x -> 
                 let mutable id = -1
                 let mutable limit = 0
@@ -486,4 +522,21 @@ let runSematic gameDesc =
                 MultiSpriteCounterTagged(ids.ToArray(),limit,win)
             )
 
-    id_map, tree_map, level_mapping_set, tagged_eos, tagged_neos, termination_set, reverse_hierarchy, initializer_map
+    let resource_limits = // Limits for all the ids.
+        [|
+        for x in tree_map do
+            yield x.Key,x.Value |> fst |> fun v -> v.limit
+        |]
+        |> Array.sortBy (fun (k,_) -> k)
+        |> Array.map (fun (_,v) -> v)
+
+    let resource_list = // Those with resource annotation will get printed
+        [|
+        for x in tree_map do
+            let k,v = x.Key,x.Value |> fst
+            match v.mclass with
+            | Resource -> yield reverse_id_map.[k], k
+            | _ -> ()
+        |]
+
+    id_map, tree_map, level_mapping_set, tagged_eos, tagged_neos, termination_set, reverse_hierarchy, initializer_map, resource_limits, resource_list, reverse_id_map
