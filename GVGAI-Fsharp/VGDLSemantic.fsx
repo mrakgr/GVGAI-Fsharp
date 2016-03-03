@@ -14,32 +14,58 @@ open FParsec
 open System.Collections.Generic
 open System.Linq
 
+let SPRITE_WIDTH, SPRITE_HEIGHT = 20,20
 let STANDARD_SPEED = 3.0f
 let TICK_ADJUSTER = 6
 
-type VGDLSprite =
+type AttributeTypesRecord =
+    {
+    mclass : MainClassTypes
+    shootType : int
+    cooldown : int
+    probability : float
+    orientation : float32 * float32
+    color : Color
+    speed : float32
+    image : string
+    total : int
+    singleton : bool
+    shrinkfactor : float
+    limit : int
+    value : int
+    spreadprob : float
+    ammo : int
+    rotate_in_place : bool
+    epsilon : float
+    shootType1 : int
+    shootType2 : int
+    invisible : bool
+    }
+
+type VGDLSprite = 
     struct
-    val texture : Texture2D option
+    val texture : Texture2D option // It might be possible to remove option by passing in Game into runSemantic and creating an empty texture.
     val position : Vector2
-    val velocity : Vector2
+    val orientation : Vector2
+    val speed : float32
     val id : int
     val elapsed_time : int
     val total : int
-    val orientation : Vector2
     val resources : Map<int, int>
     val mclass : MainClassTypes
-    val shootType : int
+    val shootType : int 
     val cooldown : int
     val probability : float
     val limit : int
     val duration : int
+    val ammo : int
         
-    new(texture,position,velocity,id,elapsed_time,total,orientation,resources,mclass,shootType,cooldown,probability,limit,duration) =
+    new(texture,position,orientation,speed,id,elapsed_time,total,resources,mclass,shootType,cooldown,probability,limit,duration,ammo) =
         {
-        texture=texture;position=position;velocity=velocity;
-        id=id;elapsed_time=elapsed_time;total=total;orientation=orientation;resources=resources;
+        texture=texture;position=position;orientation=orientation;speed=speed;
+        id=id;elapsed_time=elapsed_time;total=total;resources=resources;
         mclass=mclass;shootType=shootType;cooldown=cooldown;probability=probability;limit=limit;
-        duration=duration;
+        duration=duration;ammo=ammo;
         }
     end
 
@@ -47,29 +73,30 @@ type VGDLSprite =
     static member def= // Should be synced with the default record, but no matter.
         new VGDLSprite(None,
             position=Vector2(0.0f,0.0f),
-            velocity=Vector2(0.0f,0.0f),
+            orientation=Vector2(0.0f,0.0f),
+            speed=0.0f,
             id= -1,
             elapsed_time=0,
             total=0,
-            orientation=Vector2(0.0f,0.0f),
             resources=Map.empty,
             mclass=NoClass,
             shootType=0,
             cooldown=0,
             probability=0.0,
             limit=0,
-            duration=0)
+            duration=0,
+            ammo= -1)
 
 // The type that plays the role of a transitioner.
 type VGDLMutableSprite =
     struct
     val mutable texture : Texture2D option
     val mutable position : Vector2
-    val mutable velocity : Vector2
+    val mutable orientation : Vector2
+    val mutable speed : float32
     val mutable id : int
     val mutable elapsed_time : int
     val mutable total : int
-    val mutable orientation : Vector2
     val mutable resources : Map<int, int>
     val mutable mclass : MainClassTypes
     val mutable shootType : int
@@ -77,21 +104,22 @@ type VGDLMutableSprite =
     val mutable probability : float
     val mutable limit : int
     val mutable duration : int
+    val mutable ammo : int
         
-    new(texture,position,velocity,id,elapsed_time,total,orientation,resources,mclass,shootType,cooldown,probability,limit,duration) =
+    new(texture,position,orientation,speed,id,elapsed_time,total,resources,mclass,shootType,cooldown,probability,limit,duration,ammo) =
         {
-        texture=texture;position=position;velocity=velocity;
-        id=id;elapsed_time=elapsed_time;total=total;orientation=orientation;resources=resources;
+        texture=texture;position=position;orientation=orientation;speed=speed;
+        id=id;elapsed_time=elapsed_time;total=total;resources=resources;
         mclass=mclass;shootType=shootType;cooldown=cooldown;probability=probability;limit=limit;
-        duration=duration;
+        duration=duration;ammo=ammo;
         }
     end
 
     static member inline fromIm (x: VGDLSprite) =
-        new VGDLMutableSprite(x.texture,x.position,x.velocity,x.id,x.elapsed_time,x.total,x.orientation,x.resources,x.mclass,x.shootType,x.cooldown,x.probability,x.limit,x.duration)
+        new VGDLMutableSprite(x.texture,x.position,x.orientation,x.speed,x.id,x.elapsed_time,x.total,x.resources,x.mclass,x.shootType,x.cooldown,x.probability,x.limit,x.duration,x.ammo)
 
     member inline x.toIm =
-        new VGDLSprite(x.texture,x.position,x.velocity,x.id,x.elapsed_time,x.total,x.orientation,x.resources,x.mclass,x.shootType,x.cooldown,x.probability,x.limit,x.duration)
+        new VGDLSprite(x.texture,x.position,x.orientation,x.speed,x.id,x.elapsed_time,x.total,x.resources,x.mclass,x.shootType,x.cooldown,x.probability,x.limit,x.duration,x.ammo)
 
 // Double buffered state type.
 type StateType =
@@ -117,20 +145,36 @@ type private MainRec =
 type private TagRecord =
     {
     scoreChange : int
-    resource : int
+    resource : int option
     limit : int
-    stype : int
+    stype : int option
     value : int
     }
 
 let private default_tagrec =
     {
     scoreChange = 0
-    resource = -1
+    resource = None
     limit = 0
-    stype = -1
-    value = 0
+    stype = None
+    value = 1
     }
+
+let DOWN = 
+    let t = OrientationConstants.DOWN 
+    Vector2(fst t, snd t)
+let UP = 
+    let t = OrientationConstants.UP 
+    Vector2(fst t, snd t)
+let LEFT = 
+    let t = OrientationConstants.LEFT
+    Vector2(fst t, snd t)
+let RIGHT = 
+    let t = OrientationConstants.RIGHT 
+    Vector2(fst t, snd t)
+
+let ORIENTATIONS = [|DOWN;UP;LEFT;RIGHT|]
+let rng = System.Random()
 
 let runSematic gameDesc =
     let tree_rec = 
@@ -229,21 +273,30 @@ let runSematic gameDesc =
             shootType = -1
             cooldown = 0
             probability = 1.0
-            orientation = OrientationConstants.DOWN_RIGHT
-            color = ColorsConstants.WHITE
-            speed = 1.0
+            orientation = 0.0f,0.0f
+            color = Color.White
+            speed = STANDARD_SPEED
             image = ""
             total = System.Int32.MaxValue
             singleton = false
             shrinkfactor = 1.0
             limit = 0
+            value = 1
+            spreadprob = 1.0
+            ammo = -1
+            rotate_in_place = false
+            epsilon = 0.0
+            shootType1 = -1
+            shootType2 = -1
+            invisible = false
             }
 
         let sprite_names, hierarchy_map = mapHierarchy tree_rec.sprite_set
         
         let id_map, reverse_id_map = 
-            "avatar"::"wall"::sprite_names 
+            sprite_names 
             |> List.toArray
+            |> fun x -> Array.append x [|"wall";"avatar"|]
             |> Array.distinct 
             |> Array.rev
             |> Array.mapi (fun i x -> x,i)
@@ -267,18 +320,27 @@ let runSematic gameDesc =
                                 else
                                     {state with mclass = x}
                             | MainClass x -> {state with mclass = x}
-                            | ShootType x -> {state with shootType = id_map.[x]}
-                            | Cooldown x -> {state with cooldown = x*TICK_ADJUSTER}
-                            | Probability x -> {state with probability = 1.0 - (1.0-x) ** (1.0 / (float TICK_ADJUSTER))}
-                            | Orientation (x,y) -> {state with orientation = x,y}
-                            | Color (x,y,z) -> {state with color = x,y,z}
-                            | Speed x -> {state with speed = x}
-                            | Image x -> {state with image = x}
-                            | Total x -> {state with total = x}
-                            | Singleton x -> {state with singleton = x}
-                            | ShrinkFactor x -> {state with shrinkfactor = x}
-                            | Limit x -> {state with limit = x}
-                            | PhysicsType x -> state // TODO: This will do nothing for now.
+                            | ShootTypeAttr x -> {state with shootType = id_map.[x]}
+                            | CooldownAttr x -> {state with cooldown = x*TICK_ADJUSTER}
+                            | ProbabilityAttr x -> {state with probability = 1.0 - (1.0-x) ** (1.0 / (float TICK_ADJUSTER))}
+                            | OrientationAttr (x,y) -> {state with orientation = x,y}
+                            | ColorAttr x -> {state with color = x}
+                            | SpeedAttr x -> {state with speed = (STANDARD_SPEED * float32 x)}
+                            | ImageAttr x -> {state with image = x}
+                            | TotalAttr x -> {state with total = x}
+                            | SingletonAttr x -> {state with singleton = x}
+                            | ShrinkFactorAttr x -> {state with shrinkfactor = x}
+                            | LimitAttr x -> {state with limit = x}
+                            | PhysicsTypeAttr x -> state // TODO: This will do nothing for now.
+                            | PortalAttr x -> state // This does nothing as well currently.
+                            | ValueAttr x -> {state with value = x}
+                            | SpreadProbAttr x -> {state with spreadprob = x}
+                            | AmmoAttr x -> {state with ammo = id_map.[x]}
+                            | RotateInPlaceAttr x -> {state with rotate_in_place = x}
+                            | EpsilonAttr x -> {state with epsilon = x}
+                            | ShootType1Attr x -> {state with shootType1 = id_map.[x]}
+                            | ShootType2Attr x -> {state with shootType2 = id_map.[x]}
+                            | InvisibleAttr x -> {state with invisible = x}
                             ) default_record v
                 )
             |> Map.toArray |> Array.map (fun (k,v) -> id_map.[k],v) |> Map.ofArray
@@ -286,8 +348,7 @@ let runSematic gameDesc =
                 map |> Map.map (fun k v -> 
                     match v.mclass with
                     | Spawnpoint -> 
-                        if v.shootType = -1 then failwith "Spawnpoints should always have stypes defined."
-                        if v.cooldown = 0 then {v with cooldown = map.[v.shootType].cooldown} else v
+                        if v.shootType <> -1 && v.cooldown = 0 then {v with cooldown = map.[v.shootType].cooldown} else v
                     | _ -> v
                     )
 
@@ -311,7 +372,7 @@ let runSematic gameDesc =
             function
             | x::xs ->
                 match x with
-                | Interaction((_,"EOS"),_) -> loop (x::eos) neos xs
+                | Interaction((_,"eos"),_) -> loop (x::eos) neos xs
                 | Interaction _ -> loop eos (x::neos) xs
             | [] -> eos,neos
         loop [] [] tree_rec.interaction_set
@@ -332,35 +393,44 @@ let runSematic gameDesc =
                 | InteractionResource x -> 
                     match id_map.TryGetValue x with
                     | true, v -> {state with resource = v}
-                    | false, _ ->
-                        let t = id_map.Count
-                        printfn "Assigning new id %i to resource %s" t x
-                        id_map.Add(x,t)
-                        {state with resource = t}
+                    | false, _ -> failwithf "Resource %s not found!" x
                 | InteractionLimit x -> {state with limit = x}
-                | InteractionStype x -> {state with stype = id_map.[x]}
+                | InteractionStype x -> 
+                    match id_map.TryGetValue x with
+                    | true, v -> {state with stype = v}
+                    | false, _ -> failwithf "Stype %s not found!" x
                 | InteractionValue x -> {state with value = x}
             Seq.fold fold_state default_tagrec hashset
                
         function
         | TurnAround -> TurnAroundTagged
-        | CollectResource x -> let t = tag_hashset x in CollectResourceTagged(r, t.scoreChange)
+        | CollectResource x -> 
+            let t = tag_hashset x
+            let v = tree_map.[r] |> fst |> (fun x -> x.value) 
+            CollectResourceTagged(r,v,t.scoreChange)
         | KillIfFromAbove x -> let t = tag_hashset x in KillIfFromAboveTagged t.scoreChange
         | KillIfOtherHasMore x -> let t = tag_hashset x in KillIfOtherHasMoreTagged(t.resource,t.limit,t.scoreChange)
         | KillSprite x -> let t = tag_hashset x in KillSpriteTagged t.scoreChange
         | TransformTo x -> let t = tag_hashset x in TransformToTagged(t.stype,t.scoreChange)
         | CloneSprite -> CloneSpriteTagged
-        | ChangeResource x -> let t = tag_hashset x in ChangeResourceTagged(t.resource,t.value)
+        | ChangeResource x -> 
+            let t = tag_hashset x 
+            let v = tree_map.[t.resource] |> fst |> (fun x -> x.value) 
+            ChangeResourceTagged(t.resource,(if t.value = 0 then v else t.value), t.scoreChange)
         | PullWithIt -> PullWithItTagged
         | KillIfHasLess x -> let t = tag_hashset x in KillIfHasLessTagged(t.resource,t.limit,t.scoreChange)
+        | KillIfHasMore x -> let t = tag_hashset x in KillIfHasMoreTagged(t.resource,t.limit,t.scoreChange)
         | TeleportToExit -> TeleportToExitTagged
         | BounceForward -> BounceForwardTagged
+        | SpawnIfHasLess x -> let t = tag_hashset x in SpawnIfHasLessTagged(t.resource,t.stype,t.limit,t.scoreChange)
+        | SpawnIfHasMore x -> let t = tag_hashset x in SpawnIfHasMoreTagged(t.resource,t.stype,t.limit,t.scoreChange)
 
     let interaction_tagger_del l r =
         function
         | StepBack -> if pull_with_it_exists then StepBackAndClearPullWithItTagged else StepBackTagged
         | WrapAround -> WrapAroundTagged
-        | ReverseDirection -> ReverseDirectionTagged           
+        | ReverseDirection -> ReverseDirectionTagged       
+        | FlipDirection -> FlipDirectionTagged    
 
     let tagged_eos = 
         let buf_im = Array.init tree_map.Count (fun _ -> ResizeArray())
@@ -423,60 +493,68 @@ let runSematic gameDesc =
                 match d.TryGetValue self with
                 | true, dh -> dh.Add parent |> ignore
                 | false, _ -> d.Add(self, HashSet([|self;parent|],HashIdentity.Structural))
-        d.ToArray() |> Array.sortBy (fun x -> x.Key) |> Array.map (fun x -> x.Value |> Seq.toArray)
+        d.ToArray() |> Array.sortBy (fun x -> x.Key) |> Array.map (fun x -> x.Value |> Seq.toArray |> Array.sort)
         
-    let initializer_map (texture_dict : Dictionary<string, Texture2D>) =
+    let initializer_map (texture_dict : Dictionary<string, Texture2D>) (game : Game) =
         /// Get the image name of a sprite otherwise it returns ""
         let image_name_of sprite_name = 
             tree_map.[sprite_name] 
             |> fst 
             |> fun x -> x.image
-        Map(
-            [|
-            for p in tree_map do
-                let sprite_id,r = p.Key, p.Value |> fst
-                let texture = 
-                    match texture_dict.TryGetValue (image_name_of sprite_id) with
-                    | true, v -> Some v
-                    | false, _ -> None
+        [|
+        for p in tree_map do
+            let sprite_id,r = p.Key, p.Value |> fst
+            let texture = 
+                match texture_dict.TryGetValue (image_name_of sprite_id) with
+                | true, v -> v |> Some
+                | false, _ -> 
+                    let t = new Texture2D(game.GraphicsDevice, SPRITE_WIDTH, SPRITE_HEIGHT)
+                    t.SetData(Array.init (SPRITE_WIDTH*SPRITE_HEIGHT) (fun _ -> r.color))
+                    t |> Some
+            let init position direction = 
                 let velocity = 
-                    let speed = r.speed |> float32
-                    let v = STANDARD_SPEED
                     match r.mclass with
-                    | FlakAvatar -> Vector2(v*speed,0.0f)
-                    | Bomber -> Vector2(v*speed,0.0f)
-                    | _ -> Vector2(v*speed*(fst r.orientation),v*speed*(snd r.orientation))
-                let init position = 
-                    new VGDLSprite(
-                        texture,
-                        position=position,
-                        velocity=velocity,
-                        id=sprite_id,
-                        elapsed_time=0,
-                        total=r.total,
-                        orientation=Vector2(1.0f,1.0f),
-                        resources=Map.empty,
-                        mclass=r.mclass,
-                        shootType=r.shootType,
-                        cooldown=r.cooldown*10,
-                        probability=r.probability,
-                        limit=r.limit,
-                        duration=0
-                        )
+                    | FlakAvatar -> Vector2(r.speed,0.0f)
+                    | RandomMissile -> ORIENTATIONS.[rng.Next(0,ORIENTATIONS.Length)]*r.speed
+                    | Bomber -> Vector2(r.speed,0.0f)
+                    | _ -> Vector2(r.speed*(fst r.orientation),r.speed*(snd r.orientation))
+                new VGDLSprite(
+                    texture,
+                    position=position,
+                    orientation=defaultArg direction velocity,
+                    speed=r.speed,
+                    id=sprite_id,
+                    elapsed_time=0,
+                    total=r.total,
+                    resources=Map.empty,
+                    mclass=r.mclass,
+                    shootType=r.shootType,
+                    cooldown=r.cooldown,
+                    probability=
+                        (match r.mclass with
+                        | Spreader -> r.spreadprob
+                        | _ -> r.probability),
+                    limit=r.limit,
+                    duration=0,
+                    ammo=r.ammo
+                    )
 
-                yield sprite_id, init
-                |])
-        |> fun x -> Dictionary(x,HashIdentity.Structural)
+            yield sprite_id, init
+            |]
+        |> Array.sortBy (fun (k,v) -> k)
+        |> Array.map (fun (k,v) -> v)
 
     let level_mapping_set =
         tree_rec.level_mapping_set
         |> Map.map (fun k v -> 
             v |> List.toArray 
-            |> Array.map (
+            |> Array.choose (
                 fun x -> 
                 match id_map.TryGetValue x with
-                | true, v -> id_map.[x]
-                | false, _ -> failwithf "In LevelMapping there is an invalid mapping. key=%s" x
+                | true, v -> Some id_map.[x]
+                | false, _ -> 
+                    printfn "In LevelMapping there is an invalid mapping. key=%s" x
+                    None
                 ))
 
     let termination_set =
@@ -530,7 +608,7 @@ let runSematic gameDesc =
         |> Array.sortBy (fun (k,_) -> k)
         |> Array.map (fun (_,v) -> v)
 
-    let resource_list = // Those with resource annotation will get printed
+    let resource_list = // Those with the Resource class will get printed
         [|
         for x in tree_map do
             let k,v = x.Key,x.Value |> fst
@@ -539,4 +617,12 @@ let runSematic gameDesc =
             | _ -> ()
         |]
 
-    id_map, tree_map, level_mapping_set, tagged_eos, tagged_neos, termination_set, reverse_hierarchy, initializer_map, resource_limits, resource_list, reverse_id_map
+    let reverse_singleton_hierarchy = // Filters out non singletons from the reverse hierarchy.
+        reverse_hierarchy
+        |> Array.map (fun x ->
+            x |> Array.tryFind (fun x -> 
+                tree_map.[x] |> fst |> fun x -> x.singleton))
+
+    let avatar_id = level_mapping_set.['A'].[0]
+
+    id_map, tree_map, level_mapping_set, tagged_eos, tagged_neos, termination_set, reverse_hierarchy, initializer_map, resource_limits, resource_list, reverse_id_map, reverse_singleton_hierarchy, avatar_id

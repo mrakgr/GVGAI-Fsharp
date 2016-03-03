@@ -20,7 +20,7 @@ I am definitely aiming to exceed the original in simplicity of use.
 
 To use the library just run VGDLFunGen.fsx.
 
-UPDATE 2/28/2016: Chase, Frogs, Missile Command, Portals are done. Will take another break to learn [Idriss](http://www.idris-lang.org/) for a while. After this I do not foresee having to take any further detours, but this one might take longer than the IL 2.0 Assembler book. It depends how fun it turns out to be.
+UPDATE 2/28/2016: Chase, Frogs, Missile Command, Portals are done. Will take another break to learn [Idris](http://www.idris-lang.org/) for a while. After this I do not foresee having to take any further detours, but this one might take longer than the IL 2.0 Assembler book. It depends how fun it turns out to be.
 
 UPDATE 2/29/2016: A short review of Idris after a crazy day of focusing full out on it: it is not nearly ready for prime time. The question of whether it is worth seriously using over F# or some other mainstream language is not worth asking at the moment. A more interesting question would be to ask whether a future completed Idris would be a match for the big players. I can't tell at all at this point. Dependent types have a cost in that they weaken the type inference and they blur the distinction between objects and types so there is a price to be paid for them. I am concerned that they make the language less easy to reason about. My programming experience was not effective at all on helping me get a handle on the language due to the blurred boundaries. The documentation is insufficient at this point anyway. The book on Idris by its creator should be a vital resource when it comes out this summer. I'll definitely be interested in reading it.
 
@@ -30,9 +30,11 @@ I am satisfied with my brief exploration, I'll leave studying depently typed lan
 
 UPDATE 3/1/2016: Done with the first cour. "aliens", "boulderdash", "butterflies", "chase", "frogs", "missilecommand", "portals", "sokoban", "survivezombies", "zelda" are done.
 
+UPDATE 3/3/2016: Most of cour two is done. Updating the disclaimer. Currently it is broken. Will fix that soon.
+
 Dependencies:
 
 * MonoGame
 * Fparsec
 
-Disclaimer: The sprites belong to [GVGAI](http://www.gvgai.net/).
+Disclaimer: The sprites belong to [GVGAI](http://www.gvgai.net/). Also this library not endorsed or supported by Essex University or the original authors. It is solely based on my own initiative and we are in no way related. This port is made for my own learning purposes. Also it is a complete rebuild and it is not based on the Java source so there will be differences though I've strived to keep the semantics the same.
