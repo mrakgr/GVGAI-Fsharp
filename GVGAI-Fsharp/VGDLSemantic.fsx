@@ -40,18 +40,20 @@ type AttributeTypesRecord =
     shootType1 : int
     shootType2 : int
     invisible : bool
+    min_ammo : int
+    ammo_cost : int
     }
 
 type VGDLSprite = 
     struct
-    val texture : Texture2D option // It might be possible to remove option by passing in Game into runSemantic and creating an empty texture.
+    val texture : Texture2D option
     val position : Vector2
     val orientation : Vector2
     val speed : float32
     val id : int
     val elapsed_time : int
     val total : int
-    val resources : Map<int, int>
+    val resources : Map<int, int> // An immutable map.
     val mclass : MainClassTypes
     val shootType : int 
     val cooldown : int
@@ -59,13 +61,15 @@ type VGDLSprite =
     val limit : int
     val duration : int
     val ammo : int
+    val min_ammo : int
+    val ammo_cost : int
         
-    new(texture,position,orientation,speed,id,elapsed_time,total,resources,mclass,shootType,cooldown,probability,limit,duration,ammo) =
+    new(texture,position,orientation,speed,id,elapsed_time,total,resources,mclass,shootType,cooldown,probability,limit,duration,ammo,min_ammo,ammo_cost) =
         {
         texture=texture;position=position;orientation=orientation;speed=speed;
         id=id;elapsed_time=elapsed_time;total=total;resources=resources;
         mclass=mclass;shootType=shootType;cooldown=cooldown;probability=probability;limit=limit;
-        duration=duration;ammo=ammo;
+        duration=duration;ammo=ammo;min_ammo=min_ammo;ammo_cost=ammo_cost;
         }
     end
 
@@ -80,12 +84,15 @@ type VGDLSprite =
             total=0,
             resources=Map.empty,
             mclass=NoClass,
-            shootType=0,
+            shootType= -1,
             cooldown=0,
             probability=0.0,
             limit=0,
             duration=0,
-            ammo= -1)
+            ammo= -1,
+            min_ammo=1,
+            ammo_cost=1
+            )
 
 // The type that plays the role of a transitioner.
 type VGDLMutableSprite =
@@ -105,21 +112,23 @@ type VGDLMutableSprite =
     val mutable limit : int
     val mutable duration : int
     val mutable ammo : int
+    val mutable min_ammo : int
+    val mutable ammo_cost : int
         
-    new(texture,position,orientation,speed,id,elapsed_time,total,resources,mclass,shootType,cooldown,probability,limit,duration,ammo) =
+    new(texture,position,orientation,speed,id,elapsed_time,total,resources,mclass,shootType,cooldown,probability,limit,duration,ammo,min_ammo,ammo_cost) =
         {
         texture=texture;position=position;orientation=orientation;speed=speed;
         id=id;elapsed_time=elapsed_time;total=total;resources=resources;
         mclass=mclass;shootType=shootType;cooldown=cooldown;probability=probability;limit=limit;
-        duration=duration;ammo=ammo;
+        duration=duration;ammo=ammo;min_ammo=min_ammo;ammo_cost=ammo_cost;
         }
     end
 
     static member inline fromIm (x: VGDLSprite) =
-        new VGDLMutableSprite(x.texture,x.position,x.orientation,x.speed,x.id,x.elapsed_time,x.total,x.resources,x.mclass,x.shootType,x.cooldown,x.probability,x.limit,x.duration,x.ammo)
+        new VGDLMutableSprite(x.texture,x.position,x.orientation,x.speed,x.id,x.elapsed_time,x.total,x.resources,x.mclass,x.shootType,x.cooldown,x.probability,x.limit,x.duration,x.ammo,x.min_ammo,x.ammo_cost)
 
     member inline x.toIm =
-        new VGDLSprite(x.texture,x.position,x.orientation,x.speed,x.id,x.elapsed_time,x.total,x.resources,x.mclass,x.shootType,x.cooldown,x.probability,x.limit,x.duration,x.ammo)
+        new VGDLSprite(x.texture,x.position,x.orientation,x.speed,x.id,x.elapsed_time,x.total,x.resources,x.mclass,x.shootType,x.cooldown,x.probability,x.limit,x.duration,x.ammo,x.min_ammo,x.ammo_cost)
 
 // Double buffered state type.
 type StateType =
@@ -145,18 +154,18 @@ type private MainRec =
 type private TagRecord =
     {
     scoreChange : int
-    resource : int option
+    resource : int
     limit : int
-    stype : int option
+    stype : int
     value : int
     }
 
 let private default_tagrec =
     {
     scoreChange = 0
-    resource = None
+    resource = -1
     limit = 0
-    stype = None
+    stype = -1
     value = 1
     }
 
@@ -289,6 +298,8 @@ let runSematic gameDesc =
             shootType1 = -1
             shootType2 = -1
             invisible = false
+            min_ammo = 1
+            ammo_cost = 1
             }
 
         let sprite_names, hierarchy_map = mapHierarchy tree_rec.sprite_set
@@ -341,6 +352,8 @@ let runSematic gameDesc =
                             | ShootType1Attr x -> {state with shootType1 = id_map.[x]}
                             | ShootType2Attr x -> {state with shootType2 = id_map.[x]}
                             | InvisibleAttr x -> {state with invisible = x}
+                            | MinAmmoAttr x -> {state with min_ammo = x}
+                            | AmmoCostAttr x -> {state with ammo_cost = x}
                             ) default_record v
                 )
             |> Map.toArray |> Array.map (fun (k,v) -> id_map.[k],v) |> Map.ofArray
@@ -416,7 +429,7 @@ let runSematic gameDesc =
         | ChangeResource x -> 
             let t = tag_hashset x 
             let v = tree_map.[t.resource] |> fst |> (fun x -> x.value) 
-            ChangeResourceTagged(t.resource,(if t.value = 0 then v else t.value), t.scoreChange)
+            ChangeResourceTagged(t.resource,(if t.value = 1 then v else t.value), t.scoreChange)
         | PullWithIt -> PullWithItTagged
         | KillIfHasLess x -> let t = tag_hashset x in KillIfHasLessTagged(t.resource,t.limit,t.scoreChange)
         | KillIfHasMore x -> let t = tag_hashset x in KillIfHasMoreTagged(t.resource,t.limit,t.scoreChange)
@@ -505,12 +518,14 @@ let runSematic gameDesc =
         for p in tree_map do
             let sprite_id,r = p.Key, p.Value |> fst
             let texture = 
-                match texture_dict.TryGetValue (image_name_of sprite_id) with
-                | true, v -> v |> Some
-                | false, _ -> 
-                    let t = new Texture2D(game.GraphicsDevice, SPRITE_WIDTH, SPRITE_HEIGHT)
-                    t.SetData(Array.init (SPRITE_WIDTH*SPRITE_HEIGHT) (fun _ -> r.color))
-                    t |> Some
+                if r.invisible = false then
+                    match texture_dict.TryGetValue (image_name_of sprite_id) with
+                    | true, v -> v |> Some
+                    | false, _ -> 
+                        let t = new Texture2D(game.GraphicsDevice, SPRITE_WIDTH, SPRITE_HEIGHT)
+                        t.SetData(Array.init (SPRITE_WIDTH*SPRITE_HEIGHT) (fun _ -> r.color))
+                        t |> Some
+                else None
             let init position direction = 
                 let velocity = 
                     match r.mclass with
@@ -536,7 +551,9 @@ let runSematic gameDesc =
                         | _ -> r.probability),
                     limit=r.limit,
                     duration=0,
-                    ammo=r.ammo
+                    ammo=r.ammo,
+                    min_ammo=r.min_ammo,
+                    ammo_cost=r.ammo_cost
                     )
 
             yield sprite_id, init

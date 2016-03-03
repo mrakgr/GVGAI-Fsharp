@@ -30,11 +30,13 @@ I am satisfied with my brief exploration, I'll leave studying depently typed lan
 
 UPDATE 3/1/2016: Done with the first cour. "aliens", "boulderdash", "butterflies", "chase", "frogs", "missilecommand", "portals", "sokoban", "survivezombies", "zelda" are done.
 
-UPDATE 3/3/2016: Most of cour two is done. Updating the disclaimer. Currently it is broken. Will fix that soon.
+UPDATE 3/3/2016: Updated the disclaimer.
+
+With the expection of "pacman" the "camelRace", "digdug", "firestorms", "infection", "firecaster","overload", , "seaquest", "whackamole", "eggomania" are done now. Finishing Pacman will be less trivial than the others as I have to add AI pathfinding to it. I guess I'll pause a bit to do some research for that.
 
 Dependencies:
 
 * MonoGame
 * Fparsec
 
-Disclaimer: The sprites belong to [GVGAI](http://www.gvgai.net/). Also this library not endorsed or supported by Essex University or the original authors. It is solely based on my own initiative and we are in no way related. This port is made for my own learning purposes. Also it is a complete rebuild and it is not based on the Java source so there will be differences though I've strived to keep the semantics the same.
+Disclaimer: The sprites belong to [GVGAI](http://www.gvgai.net/). Also this library not endorsed or supported by Essex University or the original authors. It is solely based on my own initiative and we are in no way related. This port is made for my own learning purposes. Also it is a complete rebuild and it is not based on the Java source so there will be differences even though I've strived to keep the semantics the same.

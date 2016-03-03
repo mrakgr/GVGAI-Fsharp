@@ -67,6 +67,8 @@ type AttributeTypes =
 | ShootType1Attr of string
 | ShootType2Attr of string
 | InvisibleAttr of bool
+| MinAmmoAttr of int
+| AmmoCostAttr of int
 
 type GameEndTypes = Continue | Win | Lose
 
@@ -291,6 +293,8 @@ module Inner =
             | ShootType1Attr _ -> 19
             | ShootType2Attr _ -> 20
             | InvisibleAttr _ -> 21
+            | MinAmmoAttr _ -> 22
+            | AmmoCostAttr _ -> 23
 
         HashIdentity.FromFunctions distinction_func (fun x y -> true)
 
@@ -346,6 +350,8 @@ module Inner =
             skipStringCI "stype1" >>. blanks >>. skipChar '=' >>. blanks >>. identifier .>> blanks |>> (fun x -> ShootType1Attr x);
             skipStringCI "stype2" >>. blanks >>. skipChar '=' >>. blanks >>. identifier .>> blanks |>> (fun x -> ShootType2Attr x);
             skipStringCI "invisible" >>. blanks >>. skipChar '=' >>. blanks >>. pbool .>> blanks |>> (fun x -> InvisibleAttr x);
+            skipStringCI "minAmmo" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> (fun x -> MinAmmoAttr x);
+            skipStringCI "ammoCost" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 .>> blanks |>> (fun x -> AmmoCostAttr x);
             |] 
             |> Array.map attempt
             |> fun ar -> choiceL ar "attribute"
