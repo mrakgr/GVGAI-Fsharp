@@ -39,6 +39,7 @@ type MainClassTypes =
 | Spreader
 | OrientedAvatar
 | RandomAltChaser
+| PathChaser
 
 type PhysicsTypes =
 | GridPhysics
@@ -324,6 +325,7 @@ module Inner =
             skipStringCI "Spreader" >>. blanks |>> (fun _ -> MainClass Spreader);
             skipStringCI "OrientedAvatar" >>. blanks |>> (fun _ -> MainClass OrientedAvatar);
             skipStringCI "RandomAltChaser" >>. blanks |>> (fun _ -> MainClass RandomAltChaser);
+            skipStringCI "PathChaser" >>. blanks |>> (fun _ -> MainClass PathChaser);
 
             skipStringCI "Portal" >>. blanks >>. (opt (skipChar '=' >>. blanks >>. pbool .>> blanks)) // portal can be a class or an attribute depending on if it is followed by '='
                 |>> (function | None -> MainClass Portal | Some v -> PortalAttr v);

@@ -34,6 +34,8 @@ UPDATE 3/3/2016: Updated the disclaimer.
 
 With the expection of "pacman" the "camelRace", "digdug", "firestorms", "infection", "firecaster","overload", , "seaquest", "whackamole", "eggomania" are done now. Finishing Pacman will be less trivial than the others as I have to add AI pathfinding to it. I guess I'll pause a bit to do some research for that.
 
+UPDATE 3/22/2016: Done with pathfinding using [Fringe Search](https://en.wikipedia.org/wiki/Fringe_search). PathChaser has been officially added. It took quite a decent bit [of doing](https://github.com/mrakgr/Pathfinding-Experiments), [not](https://www.hackerrank.com/domains/ai/astar-search) [to](http://theory.stanford.edu/~amitp/GameProgramming/) [mention](https://www.coursera.org/course/algs4partI) [studying](https://www.coursera.org/course/algs4partII), but I finally pulled it off. Cour two is done. Onwards to cour three. I am looking forward to finishing this project.
+
 Dependencies:
 
 * MonoGame

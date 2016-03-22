@@ -333,7 +333,7 @@ let runSematic gameDesc =
                             | MainClass x -> {state with mclass = x}
                             | ShootTypeAttr x -> {state with shootType = id_map.[x]}
                             | CooldownAttr x -> {state with cooldown = x*TICK_ADJUSTER}
-                            | ProbabilityAttr x -> {state with probability = 1.0 - (1.0-x) ** (1.0 / (float TICK_ADJUSTER))}
+                            | ProbabilityAttr x -> {state with probability = 1.0 - (1.0-x) ** (1.0 / (float TICK_ADJUSTER))} // Just a little thing to make the probabilities more inline with the original GVGAI library.
                             | OrientationAttr (x,y) -> {state with orientation = x,y}
                             | ColorAttr x -> {state with color = x}
                             | SpeedAttr x -> {state with speed = (STANDARD_SPEED * float32 x)}
@@ -348,7 +348,7 @@ let runSematic gameDesc =
                             | SpreadProbAttr x -> {state with spreadprob = x}
                             | AmmoAttr x -> {state with ammo = id_map.[x]}
                             | RotateInPlaceAttr x -> {state with rotate_in_place = x}
-                            | EpsilonAttr x -> {state with epsilon = x}
+                            | EpsilonAttr x -> {state with epsilon = 1.0 - (1.0-x) ** (1.0 / (float TICK_ADJUSTER))}
                             | ShootType1Attr x -> {state with shootType1 = id_map.[x]}
                             | ShootType2Attr x -> {state with shootType2 = id_map.[x]}
                             | InvisibleAttr x -> {state with invisible = x}
@@ -488,6 +488,24 @@ let runSematic gameDesc =
         buf_im |> Array2D.map (fun x -> x.ToArray()), // Plain arrays are faster than ResizeArrays for iterating over them.
         buf_del |> Array2D.map (fun x -> x.ToArray()),
         buf_sec |> Array2D.map (fun x -> x.ToArray())
+
+    let stepbacks_neos = // For pathfinding.
+        let buf_im = Array2D.zeroCreate tree_map.Count tree_map.Count
+        neos |> List.iteri 
+            (fun i (Interaction((l,r),attrs)) ->
+                for x in id_hierarchy_map.[id_map.[l]] do
+                    for y in id_hierarchy_map.[id_map.[r]] do
+                        match attrs with
+                        | InteractionTypesImmediate attrs -> ()
+                        | InteractionTypesDelayed attrs -> 
+                            match attrs with
+                            | StepBack -> buf_im.[x,y] <- true; printfn "buf_im.[%A,%A] <- true" reverse_id_map.[x] reverse_id_map.[y]
+                            | _ -> ()
+                        | InteractionTypesSecondary attrs -> ()
+                        | _ -> failwith "Can't match this.")
+
+        buf_im
+        
 
     let reverse_hierarchy = // Computes the reverse hierarchy from children to parents. Needed for TerminationSet counters.
         let d = Dictionary<int,HashSet<int>>(HashIdentity.Structural)
@@ -642,4 +660,5 @@ let runSematic gameDesc =
 
     let avatar_id = level_mapping_set.['A'].[0]
 
-    id_map, tree_map, level_mapping_set, tagged_eos, tagged_neos, termination_set, reverse_hierarchy, initializer_map, resource_limits, resource_list, reverse_id_map, reverse_singleton_hierarchy, avatar_id
+    id_map, tree_map, level_mapping_set, tagged_eos, tagged_neos, termination_set, reverse_hierarchy, initializer_map, 
+    resource_limits, resource_list, reverse_id_map, reverse_singleton_hierarchy, avatar_id, stepbacks_neos
