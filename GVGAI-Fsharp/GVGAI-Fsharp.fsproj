@@ -58,6 +58,7 @@
     <None Include="VGDLParser.fsx" />
     <None Include="VGDLSemantic.fsx" />
     <None Include="VGDLFunGen.fsx" />
+    <None Include="painter.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FParsec">

@@ -40,6 +40,7 @@ type MainClassTypes =
 | OrientedAvatar
 | RandomAltChaser
 | PathChaser
+| InertialAvatar
 
 type PhysicsTypes =
 | GridPhysics
@@ -112,10 +113,11 @@ type InteractionTypesImmediate =
 | PullWithIt
 | KillIfHasLess of HashSet<InteractionArguments>
 | KillIfHasMore of HashSet<InteractionArguments>
-| TeleportToExit
+| TeleportToExit of HashSet<InteractionArguments>
 | BounceForward
 | SpawnIfHasMore of HashSet<InteractionArguments>
 | SpawnIfHasLess of HashSet<InteractionArguments>
+| AttractGaze
 
 type InteractionTypesDelayed =
 | StepBack
@@ -142,11 +144,12 @@ type InteractionTypesTagged =
 | KillIfHasMoreTagged of resource : int * limit : int * scorechange : int
 | WrapAroundTagged
 | ReverseDirectionTagged
-| TeleportToExitTagged
+| TeleportToExitTagged of scorechange : int
 | BounceForwardTagged
 | FlipDirectionTagged
 | SpawnIfHasMoreTagged of resource : int * stype : int * limit : int * scorechange : int
 | SpawnIfHasLessTagged of resource : int * stype : int * limit : int * scorechange : int
+| AttractGazeTagged
 
 type InteractionTypes =
 | InteractionTypesDelayed of InteractionTypesDelayed
@@ -326,6 +329,7 @@ module Inner =
             skipStringCI "OrientedAvatar" >>. blanks |>> (fun _ -> MainClass OrientedAvatar);
             skipStringCI "RandomAltChaser" >>. blanks |>> (fun _ -> MainClass RandomAltChaser);
             skipStringCI "PathChaser" >>. blanks |>> (fun _ -> MainClass PathChaser);
+            skipStringCI "InertialAvatar" >>. blanks |>> (fun _ -> MainClass InertialAvatar);
 
             skipStringCI "Portal" >>. blanks >>. (opt (skipChar '=' >>. blanks >>. pbool .>> blanks)) // portal can be a class or an attribute depending on if it is followed by '='
                 |>> (function | None -> MainClass Portal | Some v -> PortalAttr v);
@@ -500,12 +504,13 @@ module Inner =
             skipStringCI "killIfHasLess" >>. blanks >>. (interaction_arguments [|resource; limit; scoreChange|]) |>> fun x -> InteractionTypesImmediate <| KillIfHasLess x;
             skipStringCI "killIfHasMore" >>. blanks >>. (interaction_arguments [|resource; limit; scoreChange|]) |>> fun x -> InteractionTypesImmediate <| KillIfHasMore x;
             skipStringCI "reverseDirection" >>. blanks |>> fun x -> InteractionTypesDelayed <| ReverseDirection;
-            skipStringCI "teleportToExit" >>. blanks |>> fun x -> InteractionTypesImmediate <| TeleportToExit;
+            skipStringCI "teleportToExit" >>. blanks >>. (interaction_arguments [|scoreChange|]) |>> fun x -> InteractionTypesImmediate <| TeleportToExit x;
             skipStringCI "bounceForward" >>. blanks |>> fun x -> InteractionTypesImmediate <| BounceForward;
             skipStringCI "undoall" >>. blanks |>> fun x -> InteractionTypesSecondary <| StepBackSecondary;
             skipStringCI "flipDirection" >>. blanks |>> fun x -> InteractionTypesDelayed <| FlipDirection;
             skipStringCI "spawnIfHasMore" >>. blanks >>. (interaction_arguments [|resource; stype; limit; scoreChange|]) |>> fun x -> InteractionTypesImmediate <| SpawnIfHasMore x;
             skipStringCI "spawnIfHasLess" >>. blanks >>. (interaction_arguments [|resource; stype; limit; scoreChange|]) |>> fun x -> InteractionTypesImmediate <| SpawnIfHasLess x;
+            skipStringCI "attractGaze" >>. blanks |>> fun x -> InteractionTypesImmediate <| AttractGaze;
             |] 
             |> Array.map attempt
             |> fun ar -> choiceL ar "effect" 
@@ -529,7 +534,7 @@ module Inner =
     let opening = 
         let opening_args =
             skipStringCI "square_size" >>. blanks >>. skipChar '=' >>. blanks >>. pint32 >>. spaces // square_size does nothing for now
-        (spaces >>. skipString "BasicGame" >>. blanks >>. optional opening_args) >>. sets .>> eof
+        ((skipMany (spaces1 <|> (skipChar '#' >>. skipRestOfLine false))) >>. skipString "BasicGame" >>. blanks >>. optional opening_args) >>. sets .>> eof
 
 let RunVGDLParser (spec: string) = 
     run Inner.opening (spec.Replace("\t","    ")) // Tabs can cause parsing errors.

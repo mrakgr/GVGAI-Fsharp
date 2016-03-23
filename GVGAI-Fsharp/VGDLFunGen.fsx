@@ -1,4 +1,40 @@
-﻿#if INTERACTIVE
+﻿// 3/23/2016
+
+// Version one of the fun gen. 
+
+//Training Set 1 (2015; CIG 2014)
+//games = new String[]{"aliens", "boulderdash", "butterflies", "chase", "frogs",
+//        "missilecommand", "portals", "sokoban", "survivezombies", "zelda"};
+
+//Training Set 2 (2015; Validation CIG 2014)
+//games = new String[]{"camelRace", "digdug", "firestorms", "infection", "firecaster",
+//      "overload", "pacman", "seaquest", "whackamole", "eggomania"};
+
+//Training Set 3 (2015)
+//games = new String[]{"bait", "boloadventures", "brainman", "chipschallenge",  "modality",
+//                                "painter", "realportals", "realsokoban", "thecitadel", "zenpuzzle"};
+
+// Out of the above games "painter", "realportals", "thecitadel", "zenpuzzle" do not work as I haven't stuck to the GVGAI semantics close enough and hit
+// a dead end in the development. Out of the four, Painter works with a hack that I figured out by accident.
+
+// On the up-side Pacman has pathfinding as can be seen by running this script.
+
+// The reason why I underwent this project is so I can have a runway for my neural net experiments and at the present time, I think this library is good 
+// enough for that purpose. Given how long I've been working on this (two whole months non-stop), I had wanted to do much more and maybe later I shall.
+// Given that I've hit a block and I cannot progress without redoing a good piece of this file to more closely conform to the working of the original
+// GVGAI library, it seems like a decent time to pause here.
+
+// Not to mention, it would be embarrasing to continue doing this for longer given that I've yet to try neural nets on pretty much anything.
+
+// Enough of this I say, I've proven my spirit enough. I've long wanted to transition to doing actual reinforcement learning and it is time to do so.
+// And with the above selection, I definitely have a diverse set of games to chose from, definitely good enough for an absolute beginner such as myself.
+
+// To those of you wandering around this repository with love of Fsharp, machine learning and functional programming in general, you are welcome to the code
+// here for your own endeavors. The Java library is more advanced and has a bunch of neat MCTS constrollers in it, but as for this one, you might be able 
+// to figure what it does just by reading it.
+
+
+#if INTERACTIVE
 #r @"C:\Users\Marko\Documents\Visual Studio 2015\Projects\FSharpx.Collections\src\FSharpx.Collections\bin\Release\FSharpx.Collections.dll"
 #load "VGDLSemantic.fsx"
 #endif
@@ -16,7 +52,7 @@ open System.IO
 open System.Collections
 open System.Collections.Generic
 
-let noise = 0.00 // Noise can be used to ameliorate round-off errors in enemy movement. Set it to 0.01.
+let noise = 0.00 // Noise can be used to ameliorate round-off errors in enemy movement. Set it to 0.01 if you see some enemies lagging behind others.
 
 let sprite_list =
     Directory.GetFiles (__SOURCE_DIRECTORY__ + @"\Sprites")
@@ -26,7 +62,7 @@ let font_list =
     Directory.GetFiles (__SOURCE_DIRECTORY__ + @"\Fonts")
     |> Array.mapi (fun i x -> ((x.Split [|'\\'|] |> Array.last).Split [|'.'|]).[0],i)
 
-let GRID_WIDTH, GRID_HEIGHT = 5.f, 5.f // Must be 1,2,5,10 or 20. Bad things will happen otherwise
+let GRID_WIDTH, GRID_HEIGHT = 20.f, 20.f // Must be 1,2,5,10 or 20. Bad things will happen otherwise
 
 type VGDLSprite with
     member inline sprite.grid = Vector2((truncate <| sprite.position.X / GRID_WIDTH) * GRID_WIDTH, (truncate <| sprite.position.Y / GRID_HEIGHT) * GRID_HEIGHT)
@@ -379,19 +415,26 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
             let mutable ns = VGDLMutableSprite.fromIm sprites.[i].sprite1
 
             let inline avatarMoveEffect() =
-                let k = Keyboard.GetState()
-                if k.IsKeyDown(Keys.Left) then 
-                    ns.orientation <- LEFT*ns.speed
-                    ns.position <- ns.position+ns.orientation
-                else if k.IsKeyDown(Keys.Right) then 
-                    ns.orientation <- RIGHT*ns.speed
-                    ns.position <- ns.position+ns.orientation
-                else if k.IsKeyDown(Keys.Down) then 
-                    ns.orientation <- DOWN*ns.speed
-                    ns.position <- ns.position+ns.orientation
-                else if k.IsKeyDown(Keys.Up) then 
-                    ns.orientation <- UP*ns.speed
-                    ns.position <- ns.position+ns.orientation
+                ns.duration <- ns.duration+1
+                if ns.duration > ns.cooldown then
+                    let k = Keyboard.GetState()
+                    if k.IsKeyDown(Keys.Left) then 
+                        ns.orientation <- LEFT*ns.speed
+                        ns.position <- ns.position+ns.orientation
+                        ns.duration <- 0
+                    else if k.IsKeyDown(Keys.Right) then 
+                        ns.orientation <- RIGHT*ns.speed
+                        ns.position <- ns.position+ns.orientation
+                        ns.duration <- 0
+                    else if k.IsKeyDown(Keys.Down) then 
+                        ns.orientation <- DOWN*ns.speed
+                        ns.position <- ns.position+ns.orientation
+                        ns.duration <- 0
+                    else if k.IsKeyDown(Keys.Up) then 
+                        ns.orientation <- UP*ns.speed
+                        ns.position <- ns.position+ns.orientation
+                        ns.duration <- 0
+                    
 
             /// Moves the sprite in the direction of its velocity.
             let inline passiveMoveEffect() =
@@ -590,7 +633,7 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
                 | None -> ()
 
             match ns.mclass with
-            | MovingAvatar ->
+            | MovingAvatar | InertialAvatar ->
                 avatarMoveEffect()
             | ShootAvatar | OrientedAvatar ->
                 timedOrientedShoot()
@@ -703,7 +746,7 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
             is_sprite_outside_window px py
 
 
-        let interaction_function i = // messages_del and messages_im are insantiated at the beginning of binary_effect_manager_process
+        let interaction_function i = // messages_del and messages_im are instantiated at the beginning of binary_effect_manager_process
             
             let mutable ns = VGDLMutableSprite.fromIm sprites.[i].sprite2
             let ra' = sprites.[i].sprite1
@@ -716,6 +759,8 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
                 score <- score+scoreChange
 
             let mutable tranformto_flag = true
+            
+            //if messages.Count > 0 then messages.ToArray() |> printfn "%A"
 
             for (x,o,j) in messages do
                 match x with
@@ -738,12 +783,21 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
                 | TransformToTagged(stype,scoreChange) -> 
                     if tranformto_flag then
                         let rb = sprites.[j].sprite2
-                        killsprite_manager_add i scoreChange; sprite_manager_add stype ra'.position ( 
-                            if tree_map.[stype] |> fst |> (fun x -> x.orientation = (0.0f,0.0f)) then
-                                rb.orientation |> Some
-                            else None) 0
+                        let t = 
+                            initializer_map.Value.[stype] sprites.[i].sprite2.position 
+                            <|  if tree_map.[stype] |> fst |> (fun x -> x.orientation = (0.0f,0.0f)) then
+                                    rb.orientation |> Some
+                                else None
+
+                        let r = ns.resources // transfer the resources. Everything else changes.
+                        ns <- VGDLMutableSprite.fromIm t
+                        ns.resources <- r
+                        
+                        score <- score+scoreChange
+
+                        sprite_tracker_flag <- true
                         tranformto_flag <- false
-                    else tranformto_flag <- true
+                    
                 | KillIfFromAboveTagged scoreChange -> 
                     let rb = sprites.[j].sprite2
                     let sec = Rectangle.Intersect(ns.rect,rb.rect_lower_half_horizontal)
@@ -769,7 +823,8 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
                     add_resource resource value scoreChange
                 | ReverseDirectionTagged ->
                     ns.orientation <- -ns.orientation
-                | TeleportToExitTagged ->
+                | TeleportToExitTagged scoreChange ->
+                    score <- scoreChange+score
                     ns.position <- 
                         let id = sprites.[j].sprite2.shootType
                         sprite_tracker.[id]
@@ -788,6 +843,7 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
                     match ns.resources.TryFind(resource) with
                     | Some v -> if v <= limit then sprite_manager_add stype ns.position None scoreChange
                     | None -> if 0 <= limit then sprite_manager_add stype ns.position None scoreChange
+                | AttractGazeTagged -> () // Useless effect.
 
             if pull_with_it_ar.Count > 0 then
                 ns.position <- ns.position + pull_with_it_ar.[rng.Next(0, pull_with_it_ar.Count)]
@@ -964,7 +1020,7 @@ type VGDLGame(gameDesc: string, levelDesc: string, outcome_ref) as this =
         spriteBatch.End()
         base.Draw(gameTime)
 
-let aliens_spec = """BasicGame square_size=32
+let aliens_spec ="""BasicGame square_size=32
     SpriteSet
         food > Immovable
             fruit > color=PINK img=mushroom
@@ -976,7 +1032,7 @@ let aliens_spec = """BasicGame square_size=32
             bluespawn > stype=blue
             pinkspawn > stype=pink
         moving >
-            ghost > RandomAltChaser stype1=hungry stype2=powered cooldown=3 epsilon=0.25 img=ghost
+            ghost > PathChaser stype1=hungry stype2=powered cooldown=3 epsilon=0.25 img=ghost
                 red    > color=LIGHTRED    singleton=True
                 blue   > color=LIGHTBLUE   singleton=True
                 pink   > color=PINK        singleton=True
@@ -1002,12 +1058,12 @@ let aliens_spec = """BasicGame square_size=32
         0 > power
         . > pellet
         A > hungry
-        1 > redspawn bluespawn pinkspawn orangespawn red blue pink orange
+        1 > orange
         F > fruit
         
     TerminationSet
         SpriteCounter stype=food   win=True     
-        SpriteCounter stype=pacman win=False   """
+        SpriteCounter stype=pacman win=False"""
 
 let aliens_text = 
     """wwwwwwwwwwwwwwwwwwwwwwwwwwww

@@ -36,9 +36,39 @@ With the expection of "pacman" the "camelRace", "digdug", "firestorms", "infecti
 
 UPDATE 3/22/2016: Done with pathfinding using [Fringe Search](https://en.wikipedia.org/wiki/Fringe_search). PathChaser has been officially added. It took quite a decent bit [of doing](https://github.com/mrakgr/Pathfinding-Experiments), [not](https://www.hackerrank.com/domains/ai/astar-search) [to](http://theory.stanford.edu/~amitp/GameProgramming/) [mention](https://www.coursera.org/course/algs4partI) [studying](https://www.coursera.org/course/algs4partII), but I finally pulled it off. Cour two is done. Onwards to cour three. I am looking forward to finishing this project.
 
+ UPDATE 3/23/2016:
+
+ Done with the very first version of the library.
+
+Training Set 1 (2015; CIG 2014)
+games = new String[]{"aliens", "boulderdash", "butterflies", "chase", "frogs",
+        "missilecommand", "portals", "sokoban", "survivezombies", "zelda"};
+
+Training Set 2 (2015; Validation CIG 2014)
+games = new String[]{"camelRace", "digdug", "firestorms", "infection", "firecaster",
+      "overload", "pacman", "seaquest", "whackamole", "eggomania"};
+
+Training Set 3 (2015)
+games = new String[]{"bait", "boloadventures", "brainman", "chipschallenge",  "modality",
+                                "painter", "realportals", "realsokoban", "thecitadel", "zenpuzzle"};
+
+Out of the above games "painter", "realportals", "thecitadel", "zenpuzzle" do not work as I haven't stuck to the GVGAI semantics close enough and hit a dead end in the development. Out of the four, Painter works with a hack that I figured out by accident.
+
+On the up-side Pacman has pathfinding as can be seen by running this script.
+
+The reason why I underwent this project is so I can have a runway for my neural net experiments and at the present time, I think this library is good enough for that purpose. Given how long I've been working on this (two whole months non-stop), I had wanted to do much more and maybe later I shall. Given that I've hit a block and I cannot progress without redoing a good piece of the VGDLFunGen.fsx file to more closely conform to the working of the original GVGAI library, it seems like a decent time to pause here.
+
+ Not to mention, it would be embarrasing to continue doing this for longer given that I've yet to try neural nets on pretty much anything.
+
+Enough of this I say, I've proven my spirit enough. I've long wanted to transition to doing actual reinforcement learning and it is time to do so. And with the above selection, I definitely have a diverse set of games to chose from, definitely good enough for an absolute beginner such as myself.
+
+To those of you wandering around this repository with love of Fsharp, machine learning and functional programming in general, you are welcome to the code here for your own endeavors. The Java library is more advanced and has a bunch of neat MCTS constrollers in it, but as for this one, you might be able to figure what it does just by reading it.
+
 Dependencies:
 
 * MonoGame
 * Fparsec
 
 Disclaimer: The sprites belong to [GVGAI](http://www.gvgai.net/). Also this library not endorsed or supported by Essex University or the original authors. It is solely based on my own initiative and we are in no way related. This port is made for my own learning purposes. Also it is a complete rebuild and it is not based on the Java source so there will be differences even though I've strived to keep the semantics the same.
+
+License: LGPL 3.

@@ -6,6 +6,7 @@
 #load "VGDLParser.fsx"
 #endif
 
+open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Microsoft.Xna.Framework.Input
@@ -283,13 +284,13 @@ let runSematic gameDesc =
             cooldown = 0
             probability = 1.0
             orientation = 0.0f,0.0f
-            color = Color.White
+            color = Color.Gray
             speed = STANDARD_SPEED
             image = ""
-            total = System.Int32.MaxValue
+            total = Int32.MaxValue
             singleton = false
             shrinkfactor = 1.0
-            limit = 0
+            limit = Int32.MaxValue
             value = 1
             spreadprob = 1.0
             ammo = -1
@@ -312,6 +313,7 @@ let runSematic gameDesc =
             |> Array.rev
             |> Array.mapi (fun i x -> x,i)
             |> fun x -> x.ToDictionary((fun (k,v) -> k),(fun (k,v) -> v), HashIdentity.Structural)
+            |> fun x -> x.Add("null",-1); x
             |> fun x ->
                 x, x.ToArray() |> fun x -> x.ToDictionary((fun kv -> kv.Value),(fun kv -> kv.Key), HashIdentity.Structural)
 
@@ -325,7 +327,7 @@ let runSematic gameDesc =
                     Seq.fold (
                         fun state v -> 
                             match v with
-                            | MainClass (ShootAvatar | FlakAvatar | MovingAvatar as x) -> 
+                            | MainClass (ShootAvatar | FlakAvatar | MovingAvatar | OrientedAvatar | InertialAvatar as x) -> 
                                 if state.image = "" then
                                     {state with mclass = x; image="avatar"}
                                 else
@@ -433,10 +435,11 @@ let runSematic gameDesc =
         | PullWithIt -> PullWithItTagged
         | KillIfHasLess x -> let t = tag_hashset x in KillIfHasLessTagged(t.resource,t.limit,t.scoreChange)
         | KillIfHasMore x -> let t = tag_hashset x in KillIfHasMoreTagged(t.resource,t.limit,t.scoreChange)
-        | TeleportToExit -> TeleportToExitTagged
+        | TeleportToExit x -> let t = tag_hashset x in TeleportToExitTagged(t.scoreChange)
         | BounceForward -> BounceForwardTagged
         | SpawnIfHasLess x -> let t = tag_hashset x in SpawnIfHasLessTagged(t.resource,t.stype,t.limit,t.scoreChange)
         | SpawnIfHasMore x -> let t = tag_hashset x in SpawnIfHasMoreTagged(t.resource,t.stype,t.limit,t.scoreChange)
+        | AttractGaze -> AttractGazeTagged
 
     let interaction_tagger_del l r =
         function
