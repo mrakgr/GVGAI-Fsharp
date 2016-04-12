@@ -62,7 +62,7 @@ The reason why I underwent this project is so I can have a runway for my neural 
 
 Enough of this I say, I've proven my spirit enough. I've long wanted to transition to doing actual reinforcement learning and it is time to do so. And with the above selection, I definitely have a diverse set of games to chose from, definitely good enough for an absolute beginner such as myself.
 
-To those of you wandering around this repository with love of Fsharp, machine learning and functional programming in general, you are welcome to the code here for your own endeavors. The Java library is more advanced and has a bunch of neat MCTS constrollers in it, but as for this one, you might be able to figure what it does just by reading it.
+To those of you wandering around this repository with love of Fsharp, machine learning and functional programming in general, you are welcome to the code here for your own endeavors. The Java library is more advanced and has a bunch of neat MCTS controllers in it, but as for this one, you might be able to figure what it does just by reading it.
 
 Dependencies:
 
