@@ -1,7 +1,4 @@
-﻿// TODO: Replace all the lists in here with maps. I fucked this up.
-// Had I done this in the first place, the semantic phase would have been so much easier.
-
-module VGDLParser
+﻿module VGDLParser
 // The first step of the compilation - the parser for the raw VGDL specifications. 
 // Creates a bare bones abstract syntax tree for the VGDL language from a text string.
 #nowarn "667"
