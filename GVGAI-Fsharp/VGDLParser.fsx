@@ -373,9 +373,7 @@ module Inner =
 
             pipe4 sprite_start blanks manyAttrs blanks (fun a b c _ -> Sprite(a,c))
         
-        let rec y f x = f (y f) x // The Y Combinator
-        //let rec sprites_up = many1Indents sprite sprites_up |>> (fun x -> SubSprites x) Does not work
-        let sprites_up = y (fun f -> many1Indents sprite f |>> (fun x -> SubSprites x))
+        let rec sprites_up x = (many1Indents sprite sprites_up |>> SubSprites) x
         many1Indents sprite sprites_up
 
     let wrong_indent = (fun _ -> Reply(Error, messageError "child indents not aligned")) 
